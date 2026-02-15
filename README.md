@@ -20,11 +20,8 @@ From the project root, run one of the following:
 4) Visit `/admin/` to add products.
 
 ## Configure the contact form
-Edit `public/index.html` and replace:
-`https://formsubmit.co/YOUR_EMAIL@EXAMPLE.COM`
-with your real email.
-
-
+The homepage contact form is configured for Netlify Forms (`name="contact"`, `data-netlify="true"`).
+No third-party form endpoint is required.
 
 ## Live catalog API (Neon optional)
 The storefront now tries to load products from `/.netlify/functions/products` first, then falls back to `public/data/products.json` if the function is unavailable.

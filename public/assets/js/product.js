@@ -4,8 +4,20 @@
   // Defensive: this script only runs on product pages.
   if (!wrap) return;
 
+  function escapeHtml(str) {
+    return String(str ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
 
-function slugify(str) {
+  function escapeHtmlAttr(str) {
+    return escapeHtml(str).replace(/"/g, "&quot;");
+  }
+
+  function slugify(str) {
     return String(str || "")
       .toLowerCase()
       .trim()
@@ -22,12 +34,18 @@ function slugify(str) {
     const hex = (hash >>> 0).toString(16).padStart(8, "0").slice(0, 8);
     return `${slugify(p?.name || "item")}-${hex}`;
   }
-function qp(name) {
+
+  function qp(name) {
     const u = new URL(window.location.href);
     return u.searchParams.get(name);
   }
 
-  
+  function isValidStripePaymentLink(url) {
+    const v = String(url || "").trim();
+    if (!v || v.includes("REPLACE_ME")) return false;
+    return /^https:\/\/buy\.stripe\.com\//i.test(v);
+  }
+
   // SEO: set canonical URL to include product id when present
   (function setCanonical() {
     try {
@@ -37,7 +55,7 @@ function qp(name) {
       var url = "https://sawtooththrift.com/product.html";
       if (id) url += "?id=" + encodeURIComponent(id);
       link.setAttribute("href", url);
-    } catch (_) {}
+    } catch (_) { }
   })();
 
   function conditionToSchema(condition) {
@@ -64,9 +82,8 @@ function qp(name) {
         "name": p.name || "Product",
         "description": (p.description_long || p.description_short || "").trim(),
         "image": (p.gallery && p.gallery.length ? p.gallery : [p.image]).filter(Boolean).map(src => {
-          // Support absolute URLs or relative assets
           if (/^https?:\/\//i.test(src)) return src;
-          return "https://sawtooththrift.com/" + String(src).replace(/^\//,"");
+          return "https://sawtooththrift.com/" + String(src).replace(/^\//, "");
         }),
         "brand": { "@type": "Brand", "name": "Sawtooth Thrift" },
         "sku": p.id || undefined,
@@ -75,20 +92,22 @@ function qp(name) {
           "@type": "Offer",
           "url": canonical,
           "priceCurrency": "USD",
-          "price": (p.price != null ? String(p.price).replace(/[^0-9.]/g,"") : undefined),
+          "price": (p.price != null ? String(p.price).replace(/[^0-9.]/g, "") : undefined),
           "availability": availabilityToSchema(p)
         }
       };
-      // Remove undefined keys
       const clean = JSON.parse(JSON.stringify(data));
+      const existing = document.getElementById("productJsonLd");
+      if (existing) existing.remove();
       const el = document.createElement("script");
+      el.id = "productJsonLd";
       el.type = "application/ld+json";
       el.text = JSON.stringify(clean);
       document.head.appendChild(el);
-    } catch (_) {}
+    } catch (_) { }
   }
 
-function formatPrice(n, currency) {
+  function formatPrice(n, currency) {
     const num = Number(n);
     if (!Number.isFinite(num)) return "";
     try {
@@ -141,67 +160,69 @@ function formatPrice(n, currency) {
       const qty = Number.isFinite(Number(p.quantity ?? p.qty)) ? Number(p.quantity ?? p.qty) : null;
       const isSoldOut = (qty !== null && qty <= 0) || p.status === "sold" || p.status === "inactive";
       const buyLink = p.stripe_payment_link || "#";
+      const hasValidBuyLink = isValidStripePaymentLink(buyLink);
       const itemName = p.name || "this item";
       const askSms = `sms:+12082808976?&body=${encodeURIComponent(`Hi! I'm interested in ${itemName}. Is it still available?`)}`;
 
       document.title = p.name ? `${p.name} | Sawtooth Thrift` : "Product";
+      injectProductJsonLd(p);
 
       wrap.innerHTML = `
         <div class="product-detail">
           <div class="product-detail-media card">
             ${
-              images.length
-                ? `<img src="${images[0]}" alt="${p.name || "Product"}" />`
-                : `<div class="img-placeholder tall">No Image</div>`
-            }
+          images.length
+            ? `<img src="${escapeHtmlAttr(images[0])}" alt="${escapeHtmlAttr(p.name || "Product")}" />`
+            : `<div class="img-placeholder tall">No Image</div>`
+        }
             ${
-              images.length > 1
-                ? `<div class="thumbs">
+          images.length > 1
+            ? `<div class="thumbs">
                     ${images
-                      .map(
-                        (src, idx) =>
-                          `<button class="thumb" data-src="${src}" aria-label="View image ${idx + 1}">
-                            <img src="${src}" alt="${escapeHtml(p.name || "Product")} thumbnail" loading="lazy" />
+                .map(
+                  (src, idx) =>
+                    `<button class="thumb" data-src="${escapeHtmlAttr(src)}" aria-label="View image ${idx + 1}">
+                            <img src="${escapeHtmlAttr(src)}" alt="${escapeHtmlAttr(p.name || "Product")} thumbnail" loading="lazy" />
                           </button>`
-                      )
-                      .join("")}
+                )
+                .join("")}
                   </div>`
-                : ""
-            }
+            : ""
+        }
           </div>
 
           <div class="product-detail-body">
             <div class="product-detail-top">
-              <h1>${p.name || "Untitled"}</h1>
+              <h1>${escapeHtml(p.name || "Untitled")}</h1>
               <div class="price">${formatPrice(p.price, currency)}</div>
             </div>
 
-            ${p.description_long ? `<p class="muted">${p.description_long}</p>` : (p.description_short ? `<p class="muted">${p.description_short}</p>` : "")}
+            ${p.description_long ? `<p class="muted">${escapeHtml(p.description_long)}</p>` : (p.description_short ? `<p class="muted">${escapeHtml(p.description_short)}</p>` : "")}
 ${(p.condition || p.size || p.dimensions || qty !== null) ? `
             <div class="product-meta" style="margin-top:10px;">
-              ${p.condition ? `<span class="pill">${p.condition}</span>` : ``}
-              ${(p.size || p.dimensions) ? `<span class="pill">${[p.size, p.dimensions].filter(Boolean).join(" • ")}</span>` : ``}
+              ${p.condition ? `<span class="pill">${escapeHtml(p.condition)}</span>` : ``}
+              ${(p.size || p.dimensions) ? `<span class="pill">${escapeHtml([p.size, p.dimensions].filter(Boolean).join(" • "))}</span>` : ``}
               ${qty !== null ? `<span class="pill pill-soft">${isSoldOut ? "Sold Out" : `In stock: ${qty}`}</span>` : ``}
             </div>
           ` : ``}
 
             <div class="detail-notes">
-              ${p.inventory_note ? `<div class="note"><div class="note-title">Availability</div><div class="muted small">${p.inventory_note}</div></div>` : ""}
-              ${p.shipping_note ? `<div class="note"><div class="note-title">Shipping</div><div class="muted small">${p.shipping_note}</div></div>` : ""}
+              ${p.inventory_note ? `<div class="note"><div class="note-title">Availability</div><div class="muted small">${escapeHtml(p.inventory_note)}</div></div>` : ""}
+              ${p.shipping_note ? `<div class="note"><div class="note-title">Shipping</div><div class="muted small">${escapeHtml(p.shipping_note)}</div></div>` : ""}
             </div>
 
             <div class="detail-actions">
-              ${isSoldOut ? `<span class="btn" style="opacity:0.55;pointer-events:none;">Sold Out</span>` : `<a class="btn" href="${buyLink}" target="_blank" rel="noopener">Buy Now</a>`}
+              ${isSoldOut ? `<span class="btn" style="opacity:0.55;pointer-events:none;">Sold Out</span>` : hasValidBuyLink ? `<a class="btn" href="${escapeHtmlAttr(buyLink)}" target="_blank" rel="noopener">Buy Now</a>` : `<span class="btn" style="opacity:0.55;pointer-events:none;">Checkout unavailable</span>`}
               <a class="btn btn-ghost" href="${askSms}">Text us</a>
             </div>
           </div>
         </div>
         <div class="mobile-buybar">
           <div>
-            <div class="muted small">${p.name || "Item"}</div>
+            <div class="muted small">${escapeHtml(p.name || "Item")}</div>
             <div class="price">${formatPrice(p.price, currency)}</div>
           </div>
-          ${isSoldOut ? `<span class="btn" style="opacity:0.55;pointer-events:none;">Sold Out</span>` : `<a class="btn" href="${buyLink}" target="_blank" rel="noopener">Buy Now</a>`}
+          ${isSoldOut ? `<span class="btn" style="opacity:0.55;pointer-events:none;">Sold Out</span>` : hasValidBuyLink ? `<a class="btn" href="${escapeHtmlAttr(buyLink)}" target="_blank" rel="noopener">Buy Now</a>` : `<span class="btn" style="opacity:0.55;pointer-events:none;">Checkout unavailable</span>`}
         </div>
       `;
 

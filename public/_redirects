@@ -1,9 +1,4 @@
-# Let Netlify’s built-in endpoints work (Identity + Git Gateway)
-/.netlify/*  /.netlify/:splat  200
-
-# Make /admin routes resolve to the Decap app
+# Admin routes for Decap CMS
 /admin       /admin/index.html 200
 /admin/      /admin/index.html 200
-
-# If you use an SPA fallback for the rest of the site, keep it LAST
-/*           /index.html       200
+/admin/*     /admin/index.html 200
