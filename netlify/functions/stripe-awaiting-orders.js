@@ -37,6 +37,19 @@ function normalizeItems(lineItems) {
   });
 }
 
+function isPaidSession(session) {
+  if (!session || session.payment_status !== 'paid') return false;
+  if (typeof session.status === 'string' && session.status !== 'complete') return false;
+  return true;
+}
+
+function stripeError(err) {
+  return json(502, {
+    ok: false,
+    error: err && err.message ? `Stripe API error: ${err.message}` : 'Stripe API request failed.',
+  });
+}
+
 exports.handler = async (event, _context) => {
   try {
     try {
@@ -52,13 +65,14 @@ exports.handler = async (event, _context) => {
     const rawLimit = parseInt(event?.queryStringParameters?.limit || "50", 10);
     const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 50, 1), 100);
 
-    const sessionsResp = await stripe.checkout.sessions.list({
-      limit,
-      payment_status: "paid",
-      expand: ["data.customer_details", "data.shipping_details", "data.payment_intent"],
-    });
+    let sessionsResp;
+    try {
+      sessionsResp = await stripe.checkout.sessions.list({ limit });
+    } catch (err) {
+      return stripeError(err);
+    }
 
-    const sessions = Array.isArray(sessionsResp.data) ? sessionsResp.data : [];
+    const sessions = (Array.isArray(sessionsResp.data) ? sessionsResp.data : []).filter(isPaidSession);
 
     const orders = await Promise.all(
       sessions.map(async (session) => {
@@ -68,9 +82,7 @@ exports.handler = async (event, _context) => {
         });
 
         const sessionMeta = session && session.metadata ? session.metadata : {};
-        const piMeta = session && session.payment_intent && session.payment_intent.metadata ? session.payment_intent.metadata : {};
-        const mergedMeta = { ...piMeta, ...sessionMeta };
-        const shipped = mergedMeta.fulfillment_status === "shipped";
+        const shipped = sessionMeta.fulfillment_status === "shipped";
 
         return {
           id: session.id,
@@ -81,14 +93,14 @@ exports.handler = async (event, _context) => {
           recipient: normalizeRecipient(session),
           items: normalizeItems(lineItemsResp.data),
           status: shipped ? "shipped" : "paid",
-          tracking: mergedMeta.tracking || "",
-          shipped_at: mergedMeta.shipped_at || "",
+          tracking: sessionMeta.tracking || "",
+          shipped_at: sessionMeta.shipped_at || "",
         };
       })
     );
 
     return json(200, { ok: true, orders });
   } catch (err) {
-    return json(500, { ok: false, error: err && err.message ? err.message : "Server error" });
+    return stripeError(err);
   }
 };

@@ -37,6 +37,19 @@ function normalizeItems(lineItems) {
   });
 }
 
+function isPaidSession(session) {
+  if (!session || session.payment_status !== 'paid') return false;
+  if (typeof session.status === 'string' && session.status !== 'complete') return false;
+  return true;
+}
+
+function stripeError(err) {
+  return json(502, {
+    ok: false,
+    error: err && err.message ? `Stripe API error: ${err.message}` : 'Stripe API request failed.',
+  });
+}
+
 exports.handler = async (event, _context) => {
   try {
     try {
@@ -56,20 +69,26 @@ exports.handler = async (event, _context) => {
     const status = rawStatus === "shipped" || rawStatus === "all" ? rawStatus : "unshipped";
     const q = String(event?.queryStringParameters?.q || "").trim().toLowerCase();
 
-    const sessionsResp = await stripe.checkout.sessions.list({
-      limit,
-      payment_status: "paid",
-      expand: ["data.customer_details", "data.shipping_details", "data.payment_intent"],
-    });
+    let sessionsResp;
+    try {
+      sessionsResp = await stripe.checkout.sessions.list({ limit });
+    } catch (err) {
+      return stripeError(err);
+    }
 
-    const sessions = Array.isArray(sessionsResp.data) ? sessionsResp.data : [];
+    const sessions = (Array.isArray(sessionsResp.data) ? sessionsResp.data : []).filter(isPaidSession);
 
     const orders = await Promise.all(
       sessions.map(async (session) => {
-        const lineItemsResp = await stripe.checkout.sessions.listLineItems(session.id, {
-          limit: 100,
-          expand: ["data.price"],
-        });
+        let lineItemsResp;
+        try {
+          lineItemsResp = await stripe.checkout.sessions.listLineItems(session.id, {
+            limit: 100,
+            expand: ["data.price"],
+          });
+        } catch (err) {
+          throw err;
+        }
 
         const metadata = session && session.metadata ? session.metadata : {};
         const fulfillment_status = metadata.fulfillment_status === "shipped" ? "shipped" : "unshipped";
@@ -87,7 +106,9 @@ exports.handler = async (event, _context) => {
           shipped_at: metadata.shipped_at || "",
         };
       })
-    );
+    ).catch((err) => {
+      throw err;
+    });
 
     const filtered = orders
       .filter((order) => {
@@ -99,6 +120,6 @@ exports.handler = async (event, _context) => {
 
     return json(200, { ok: true, orders: filtered });
   } catch (err) {
-    return json(500, { ok: false, error: err && err.message ? err.message : "Server error" });
+    return stripeError(err);
   }
 };
