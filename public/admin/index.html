@@ -241,35 +241,22 @@
       else badge.textContent = "Saved";
     }
 
-    function rewriteUnsavedLabel() {
-      const nodes = Array.from(document.querySelectorAll("body *"));
-      for (const n of nodes) {
-        if (!n || !n.childNodes) continue;
-        if (n.children && n.children.length) continue;
-        const t = (n.textContent || "").trim();
-        if (t === "UNSAVED CHANGES" || t === "UNSAVED" || t === "SAVED") {
-          n.textContent = window.__CMS_DIRTY__ ? "UNSAVED CHANGES" : "SAVED";
-        }
-      }
+    function refreshBadge() {
+      applyBadge(window.__CMS_SAVE_STATE__);
     }
 
     window.addEventListener("st:cmsSaveState", (e) => {
       applyBadge(e.detail);
       if (e.detail && e.detail.status === "saved") window.__CMS_DIRTY__ = false;
       if (e.detail && e.detail.status === "error") window.__CMS_DIRTY__ = true;
-      rewriteUnsavedLabel();
     });
 
-    const mo = new MutationObserver(() => {
-      applyBadge(window.__CMS_SAVE_STATE__);
-      rewriteUnsavedLabel();
-    });
+    document.addEventListener("input", refreshBadge, true);
+    document.addEventListener("keydown", refreshBadge, true);
 
     document.addEventListener("DOMContentLoaded", () => {
       document.body.appendChild(badge);
-      mo.observe(document.body, { subtree: true, childList: true, characterData: true });
-      applyBadge(window.__CMS_SAVE_STATE__);
-      rewriteUnsavedLabel();
+      refreshBadge();
     });
   })();
 </script>
@@ -920,18 +907,27 @@
       }
     </style>
 
-    <button class="st-await-launcher" id="stAwaitLauncher" type="button">Awaiting Orders</button>
-    <div class="st-await-panel" id="stAwaitPanel" role="dialog" aria-label="Awaiting Orders">
+    <button class="st-await-launcher" id="stAwaitLauncher" type="button">Orders</button>
+    <div class="st-await-panel" id="stAwaitPanel" role="dialog" aria-label="Orders">
       <div class="st-await-head">
-        <div><b>Awaiting Orders</b><br/><small style="opacity:.75;">Recent paid checkouts + customer shipping labels</small></div>
+        <div><b>Orders</b><br/><small style="opacity:.75;">Paid Stripe checkouts for fulfillment</small></div>
         <div class="st-await-actions">
+          <select id="stOrderStatus" style="border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.08);color:#fff;border-radius:10px;padding:8px 10px;">
+            <option value="unshipped">Unshipped</option>
+            <option value="shipped">Shipped</option>
+            <option value="all">All</option>
+          </select>
+          <input id="stOrderSearch" type="search" placeholder="Search email or order id" style="min-width:220px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.08);color:#fff;border-radius:10px;padding:8px 10px;" />
           <button type="button" id="stAwaitRefresh">Refresh</button>
-          <button type="button" id="stAwaitPrintAll">Print all labels</button>
           <button type="button" id="stAwaitClose">Close</button>
         </div>
       </div>
       <div class="st-await-body">
-        <div id="stAwaitStatus" class="st-await-status">Load recent paid orders from Stripe.</div>
+        <div class="card" style="padding:10px;margin-bottom:10px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.12);border-radius:10px;">
+          <b style="font-size:13px;">System</b>
+          <div id="stSystemStatus" class="st-await-status" style="margin-top:6px;margin-bottom:0;">Checking system status…</div>
+        </div>
+        <div id="stAwaitStatus" class="st-await-status">Load paid orders from Stripe.</div>
         <div id="stAwaitList"></div>
       </div>
     </div>
@@ -942,15 +938,17 @@
         const panel = document.getElementById("stAwaitPanel");
         const close = document.getElementById("stAwaitClose");
         const refreshBtn = document.getElementById("stAwaitRefresh");
-        const printAllBtn = document.getElementById("stAwaitPrintAll");
         const statusEl = document.getElementById("stAwaitStatus");
         const listEl = document.getElementById("stAwaitList");
+        const statusFilterEl = document.getElementById("stOrderStatus");
+        const searchEl = document.getElementById("stOrderSearch");
+        const systemEl = document.getElementById("stSystemStatus");
         let orders = [];
+        const trackingById = Object.create(null);
 
         function money(cents, currency){
           if (typeof cents !== "number") return "";
-          const v = cents / 100;
-          return new Intl.NumberFormat(undefined, { style:"currency", currency:(currency||"usd").toUpperCase() }).format(v);
+          return new Intl.NumberFormat(undefined, { style:"currency", currency:(currency||"usd").toUpperCase() }).format(cents / 100);
         }
 
         function escapeHtml(s){
@@ -966,114 +964,183 @@
           try { return await user.jwt(); } catch(e){ return null; }
         }
 
-        function hasAddress(rec){
-          return !!(rec && rec.name && rec.line1 && rec.city && rec.state && rec.zip);
+
+        async function loadSystem(){
+          if (!systemEl) return;
+          const jwt = await getJwt();
+          if (!jwt) {
+            systemEl.textContent = "Unauthorized. Please log in to admin.";
+            return;
+          }
+          try {
+            const res = await fetch("/.netlify/functions/health", {
+              headers: { "Authorization": "Bearer " + jwt }
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok) {
+              systemEl.textContent = (data && data.error) ? data.error : "Health check failed.";
+              return;
+            }
+            const stripeOk = data.stripeKeyPresent ? "yes" : "no";
+            const siteUrl = data.siteUrl || "(not set)";
+            let msg = `Stripe configured: ${stripeOk} • Site URL: ${siteUrl}`;
+            if (!data.stripeKeyPresent) msg += " • Remediation: Set STRIPE_SECRET_KEY in Netlify environment.";
+            if (!data.siteUrl) msg += " • Optional: set SITE_URL (Netlify URL is used automatically when available).";
+            systemEl.textContent = msg;
+          } catch (e) {
+            systemEl.textContent = "Health check failed. Verify function deployment and env vars.";
+          }
         }
 
-        function buildLabel(order){
+        function buildPackingSlip(order){
           const rec = order.recipient || {};
-          const itemLines = (order.items || []).map((it) => {
-            const qty = it.quantity || 1;
-            const unit = money(it.unit_amount, it.currency);
-            return `- ${it.name || "Item"}${qty > 1 ? ` x${qty}` : ""}${unit ? ` (${unit})` : ""}`;
-          }).join("\n");
+          const when = order.created ? new Date(order.created * 1000).toLocaleString() : "";
+          const itemLines = (order.items || []).map((it) => `${it.quantity || 1} x ${it.name || "Item"}`).join("\n");
+          const tracking = trackingById[order.id] != null ? trackingById[order.id] : (order.tracking || "");
 
           return [
-            "FROM:",
-            "Sawtooth Thrift",
-            "Twin Falls, ID",
+            "PACKING SLIP",
             "",
-            "TO:",
+            "SHIP TO:",
             rec.name || "",
             rec.line1 || "",
             rec.line2 || "",
             `${rec.city || ""}, ${rec.state || ""} ${rec.zip || ""}`.trim(),
-            rec.country || "US",
+            rec.country || "",
+            "",
+            `Order ID: ${order.id || "n/a"}`,
+            `Date: ${when || "n/a"}`,
+            `Customer: ${order.customer_email || "n/a"}`,
             "",
             "ITEMS:",
-            itemLines || "- Item",
+            itemLines || "1 x Item",
             "",
-            `Order: ${order.id || "n/a"}`,
-            "Carrier: USPS / UPS",
-            "Service: Ground",
-            "Tracking #: ____________________",
+            `UPS Tracking: ${tracking || "____________"}`,
           ].filter(Boolean).join("\n");
         }
 
-        function copy(text){
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(text).catch(() => {});
+        function printPackingSlip(order){
+          const slip = buildPackingSlip(order);
+          const w = window.open("", "_blank", "noopener,noreferrer,width=640,height=820");
+          if (!w || !w.document) return;
+          w.document.write(`<html><head><title>Packing Slip</title><style>body{font:14px/1.45 system-ui,Arial,sans-serif;padding:18px;color:#111}pre{white-space:pre-wrap;font:700 14px/1.45 ui-monospace,Menlo,monospace}.ship{font:700 20px/1.25 system-ui;margin-bottom:10px}.line{border-bottom:1px solid #111;display:inline-block;min-width:220px;}</style></head><body><div class="ship">SHIP TO</div><pre>${escapeHtml(slip)}</pre></body></html>`);
+          w.document.close();
+          w.focus();
+          setTimeout(() => { try { w.print(); } catch(_) {} }, 150);
+        }
+
+        function copyShipTo(order){
+          const rec = order.recipient || {};
+          const text = [rec.name, rec.line1, rec.line2, `${rec.city || ""}, ${rec.state || ""} ${rec.zip || ""}`.trim(), rec.country].filter(Boolean).join("\n");
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(() => {});
+          setStatus("Ship-to address copied.");
+        }
+
+        async function markShipped(order){
+          const jwt = await getJwt();
+          if (!jwt){ setStatus("Please log in to admin first."); return; }
+          const tracking = trackingById[order.id] != null ? trackingById[order.id] : (order.tracking || "");
+          setStatus("Marking shipped…");
+          try {
+            const res = await fetch("/.netlify/functions/stripe-mark-shipped", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Authorization": "Bearer " + jwt },
+              body: JSON.stringify({ sessionId: order.id, tracking }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok){
+              setStatus((data && data.error) ? data.error : ("Request failed (" + res.status + ")"));
+              return;
+            }
+            order.fulfillment_status = "shipped";
+            order.tracking = tracking || "";
+            order.shipped_at = new Date().toISOString();
+            render();
+            setStatus("Order marked shipped.");
+          } catch(e) {
+            setStatus("Could not mark shipped right now.");
           }
         }
 
-        function printLabel(order){
-          if (!hasAddress(order.recipient)) {
-            setStatus("Missing shipping address for this order.");
-            return;
-          }
-          const label = buildLabel(order);
-          copy(label);
-          const w = window.open("", "_blank", "noopener,noreferrer,width=460,height=680");
-          if (!w || !w.document) return;
-          w.document.write(`<pre style="font:14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding:16px; white-space:pre-wrap;">${escapeHtml(label)}</pre>`);
-          w.document.close();
-          setStatus("Label copied and opened for printing.");
+        function filteredOrders(){
+          const st = String(statusFilterEl && statusFilterEl.value ? statusFilterEl.value : "unshipped").toLowerCase();
+          const q = String(searchEl && searchEl.value ? searchEl.value : "").toLowerCase().trim();
+          return orders.filter((o) => {
+            if (st !== "all" && String(o.fulfillment_status || "unshipped") !== st) return false;
+            if (!q) return true;
+            return String(o.id || "").toLowerCase().includes(q) || String(o.customer_email || "").toLowerCase().includes(q);
+          });
         }
 
         function render(){
+          const list = filteredOrders();
           listEl.innerHTML = "";
-          if (!orders.length) {
-            listEl.innerHTML = '<div class="st-await-status">No paid orders found.</div>';
+          if (!list.length) {
+            listEl.innerHTML = '<div class="st-await-status">No matching orders.</div>';
             return;
           }
-          for (const order of orders){
-            const row = document.createElement("div");
-            row.className = "st-await-row";
-            const when = order.created ? new Date(order.created * 1000).toLocaleString() : "";
-            const itemsText = (order.items || []).map((it) => {
-              const qty = it.quantity || 1;
-              return `${it.name || "Item"}${qty > 1 ? ` x${qty}` : ""}`;
-            }).join("\n") || "No line items";
 
+          for (const order of list){
+            const row = document.createElement("details");
+            row.className = "st-await-row";
             const rec = order.recipient || {};
+            const when = order.created ? new Date(order.created * 1000).toLocaleString() : "";
+            const itemsText = (order.items || []).map((it) => `${it.quantity || 1} x ${it.name || "Item"}`).join("\n") || "No line items";
+            const tracking = trackingById[order.id] != null ? trackingById[order.id] : (order.tracking || "");
+
             row.innerHTML = `
+              <summary style="cursor:pointer;list-style:none;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;">
+                <div>
+                  <b>${escapeHtml((order.id || "").slice(0, 24))}${(order.id || "").length > 24 ? "…" : ""}</b>
+                  <small>${escapeHtml(when)}</small>
+                  <small>${escapeHtml(order.customer_email || "No email")}</small>
+                  <small>${escapeHtml(money(order.amount_total, order.currency) || "")}</small>
+                </div>
+                <div><small>${escapeHtml(String(order.fulfillment_status || "unshipped").toUpperCase())}</small></div>
+              </summary>
               <div>
-                <b>${escapeHtml(order.id || "Order")}</b>
-                <small>${escapeHtml(when)}</small>
-                <small>${escapeHtml(order.customer_email || "No customer email")}</small>
-                <small>${escapeHtml(order.payment_link_id ? ("Payment Link: " + order.payment_link_id) : "")}</small>
-              </div>
-              <div>
-                <b>${escapeHtml(rec.name || "No recipient yet")}</b>
-                <small>${escapeHtml((rec.line1 || "") + " " + (rec.line2 || ""))}</small>
-                <small>${escapeHtml((rec.city || "") + ", " + (rec.state || "") + " " + (rec.zip || ""))}</small>
-                <small>${escapeHtml(rec.country || "US")}</small>
-                <pre>${escapeHtml(itemsText)}</pre>
-              </div>
-              <div class="st-await-mini">
-                <button type="button" data-action="print">Print label</button>
-                <button type="button" data-action="copy">Copy label</button>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div>
+                    <b>Ship To</b>
+                    <small>${escapeHtml(rec.name || "")}</small>
+                    <small>${escapeHtml(rec.line1 || "")}</small>
+                    <small>${escapeHtml(rec.line2 || "")}</small>
+                    <small>${escapeHtml((rec.city || "") + ", " + (rec.state || "") + " " + (rec.zip || ""))}</small>
+                    <small>${escapeHtml(rec.country || "")}</small>
+                  </div>
+                  <div>
+                    <b>Items</b>
+                    <pre>${escapeHtml(itemsText)}</pre>
+                  </div>
+                </div>
+                <div class="st-await-mini" style="margin-top:8px;justify-content:flex-start;">
+                  <input type="text" data-action="tracking" placeholder="Tracking #" value="${escapeHtml(tracking)}" style="width:180px;padding:8px 9px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.08);color:#fff;" />
+                  <button type="button" data-action="print">Print packing slip</button>
+                  <button type="button" data-action="copy">Copy ship-to address</button>
+                  <button type="button" data-action="ship">Mark shipped</button>
+                </div>
               </div>
             `;
-            row.querySelector('[data-action="print"]').addEventListener("click", () => printLabel(order));
-            row.querySelector('[data-action="copy"]').addEventListener("click", () => {
-              if (!hasAddress(order.recipient)) { setStatus("Missing shipping address for this order."); return; }
-              copy(buildLabel(order));
-              setStatus("Label copied.");
-            });
+
+            const trackingInput = row.querySelector('[data-action="tracking"]');
+            trackingInput.addEventListener("input", () => { trackingById[order.id] = trackingInput.value || ""; });
+            row.querySelector('[data-action="print"]').addEventListener("click", () => printPackingSlip(order));
+            row.querySelector('[data-action="copy"]').addEventListener("click", () => copyShipTo(order));
+            row.querySelector('[data-action="ship"]').addEventListener("click", () => markShipped(order));
+
             listEl.appendChild(row);
           }
         }
 
         async function refresh(){
-          setStatus("Loading recent paid orders…");
+          setStatus("Loading paid orders…");
           const jwt = await getJwt();
-          if (!jwt){
-            setStatus("Please log in to admin first.");
-            return;
-          }
+          if (!jwt){ setStatus("Please log in to admin first."); return; }
           try {
-            const res = await fetch("/.netlify/functions/stripe-awaiting-orders?limit=50", {
+            const status = String(statusFilterEl && statusFilterEl.value ? statusFilterEl.value : "unshipped");
+            const q = String(searchEl && searchEl.value ? searchEl.value : "").trim();
+            const params = new URLSearchParams({ limit: "50", status, q });
+            const res = await fetch("/.netlify/functions/stripe-orders?" + params.toString(), {
               headers: { "Authorization": "Bearer " + jwt }
             });
             const data = await res.json().catch(() => ({}));
@@ -1083,31 +1150,23 @@
             }
             orders = Array.isArray(data.orders) ? data.orders : [];
             render();
-            setStatus("Loaded " + orders.length + " recent paid orders.");
+            setStatus("Loaded " + orders.length + " orders.");
           } catch(e) {
-            setStatus("Could not load awaiting orders right now.");
+            setStatus("Could not load orders right now.");
           }
-        }
-
-        function printAll(){
-          const printable = orders.filter((o) => hasAddress(o.recipient));
-          if (!printable.length){
-            setStatus("No orders with complete shipping addresses to print.");
-            return;
-          }
-          printable.forEach((o) => printLabel(o));
         }
 
         function toggle(open){
           panel.classList.toggle("open", !!open);
           launcher.style.display = open ? "none" : "";
-          if (open && !orders.length) refresh();
+          if (open) { loadSystem(); refresh(); }
         }
 
         launcher.addEventListener("click", () => toggle(true));
         close.addEventListener("click", () => toggle(false));
         refreshBtn.addEventListener("click", refresh);
-        printAllBtn.addEventListener("click", printAll);
+        statusFilterEl.addEventListener("change", refresh);
+        searchEl.addEventListener("keydown", (e) => { if (e.key === "Enter") refresh(); });
         document.addEventListener("keydown", (e) => {
           if (e.key === "Escape" && panel.classList.contains("open")) toggle(false);
         });
@@ -1246,6 +1305,300 @@
         });
       })();
     </script>
+
+
+
+    <style>
+      .st-sourcing-launcher{
+        position: fixed;
+        left: 16px;
+        top: 64px;
+        z-index: 99998;
+        padding: 10px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(0,0,0,0.12);
+        background: #0f172a;
+        color: #fff;
+        font: 700 12px/1 system-ui, sans-serif;
+        cursor: pointer;
+      }
+      .st-sourcing-panel{
+        position: fixed;
+        right: 16px;
+        top: 56px;
+        width: min(560px, calc(100vw - 32px));
+        max-height: calc(100vh - 72px);
+        overflow: auto;
+        background: rgba(255,255,255,0.98);
+        border: 1px solid rgba(0,0,0,0.12);
+        border-radius: 14px;
+        box-shadow: 0 16px 38px rgba(0,0,0,0.2);
+        z-index: 99998;
+        display: none;
+      }
+      .st-sourcing-panel.open{ display:block; }
+      .st-sourcing-head{
+        position: sticky; top: 0; background: #fff; z-index: 2;
+        display:flex; justify-content:space-between; align-items:center;
+        padding:10px 12px; border-bottom:1px solid rgba(0,0,0,.08);
+      }
+      .st-sourcing-body{ padding: 10px 12px 14px; }
+      .st-opp-card,.st-draft-card{ border:1px solid rgba(0,0,0,.1); border-radius:12px; padding:10px; margin-bottom:10px; }
+      .st-opp-card h4,.st-draft-card h4{ margin:0 0 6px; font-size:14px; }
+      .st-chip{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; border:1px solid rgba(0,0,0,.12); margin-right:6px; }
+      .st-opp-actions{ display:flex; gap:8px; margin-top:8px; }
+      .st-opp-actions button{ border-radius:8px; border:1px solid rgba(0,0,0,.16); padding:6px 10px; cursor:pointer; font:600 12px/1 system-ui,sans-serif; }
+      .st-opp-actions .accept{ background:#111827; color:#fff; }
+      .st-opp-actions .decline{ background:#fff; }
+      .st-mini-muted{ opacity:.75; font-size:12px; margin:4px 0; }
+    </style>
+
+    <button id="stSourcingLauncher" class="st-sourcing-launcher" type="button">AI Sourcing</button>
+    <section id="stSourcingPanel" class="st-sourcing-panel" aria-label="AI Sourcing (Clothes and Shoes)">
+      <div class="st-sourcing-head">
+        <strong>AI Sourcing (Clothes & Shoes)</strong>
+        <button id="stSourcingClose" type="button">Close</button>
+      </div>
+      <div class="st-sourcing-body">
+        <p class="st-mini-muted">Always shows 3 AI opportunities. Accept adds to AI Draft Products.</p>
+        <div id="stSourcingStatus" class="st-mini-muted"></div>
+        <div id="stOpportunities"></div>
+        <hr />
+        <h3 style="margin:10px 0 8px;font-size:14px;">Draft Products (AI)</h3>
+        <div id="stDraftProducts"></div>
+      </div>
+    </section>
+
+    <script>
+      (function(){
+        const launcher = document.getElementById('stSourcingLauncher');
+        const panel = document.getElementById('stSourcingPanel');
+        const closeBtn = document.getElementById('stSourcingClose');
+        const statusEl = document.getElementById('stSourcingStatus');
+        const oppEl = document.getElementById('stOpportunities');
+        const draftEl = document.getElementById('stDraftProducts');
+
+        function setStatus(msg){ statusEl.textContent = msg || ''; }
+
+        async function getJwt(){
+          if (!window.netlifyIdentity) return null;
+          const user = window.netlifyIdentity.currentUser();
+          if (!user) return null;
+          try { return await user.jwt(); } catch (e) { return null; }
+        }
+
+        async function api(url, options){
+          const jwt = await getJwt();
+          if (!jwt) throw new Error('Please log in with Netlify Identity first.');
+          const res = await fetch(url, {
+            ...(options || {}),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ' + jwt,
+              ...((options && options.headers) || {}),
+            },
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || data.ok === false) throw new Error(data.error || ('Request failed (' + res.status + ')'));
+          return data;
+        }
+
+        function escapeHtml(value){
+          return String(value || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }
+
+        function renderOpportunities(opps){
+          const list = Array.isArray(opps) ? opps.slice(0,3) : [];
+          oppEl.innerHTML = list.map(function(o){
+            const keywords = (o.search_keywords || []).map(escapeHtml).join(', ');
+            const checklist = (o.checklist || []).map(function(item){ return '<li>' + escapeHtml(item) + '</li>'; }).join('');
+            return '<article class="st-opp-card" data-opp-id="' + escapeHtml(o.opp_id) + '">'
+              + '<h4>' + escapeHtml(o.title) + '</h4>'
+              + '<div><span class="st-chip">' + escapeHtml(o.category) + '</span><span class="st-chip">Max buy $' + Number(o.max_buy_price || 0).toFixed(2) + '</span><span class="st-chip">Sell $' + Number(o.suggested_price || 0).toFixed(2) + '</span><span class="st-chip">Margin ' + escapeHtml(o.margin_estimate || '') + '</span></div>'
+              + '<div class="st-mini-muted"><strong>Keywords:</strong> ' + keywords + '</div>'
+              + '<div class="st-mini-muted"><strong>Checklist:</strong><ul>' + checklist + '</ul></div>'
+              + '<div class="st-opp-actions"><button class="accept" type="button" data-action="accept">Accept</button><button class="decline" type="button" data-action="decline">Decline</button></div>'
+              + '</article>';
+          }).join('');
+
+          if (!list.length) oppEl.innerHTML = '<div class="st-mini-muted">No opportunities available.</div>';
+
+          oppEl.querySelectorAll('button[data-action]').forEach(function(btn){
+            btn.addEventListener('click', async function(){
+              const card = btn.closest('[data-opp-id]');
+              const oppId = card ? card.getAttribute('data-opp-id') : '';
+              const action = btn.getAttribute('data-action');
+              if (!oppId) return;
+              btn.disabled = true;
+              try {
+                if (action === 'decline') {
+                  const data = await api('/.netlify/functions/ai-decline', { method:'POST', body: JSON.stringify({ opp_id: oppId }) });
+                  renderOpportunities(data.opportunities || []);
+                  setStatus('Declined. Queue refreshed to 3 opportunities.');
+                } else {
+                  const data = await api('/.netlify/functions/ai-accept', { method:'POST', body: JSON.stringify({ opp_id: oppId }) });
+                  renderOpportunities(data.opportunities || []);
+                  await loadDrafts();
+                  setStatus('Accepted and saved to AI Draft Products.');
+                }
+              } catch (e) {
+                setStatus(e.message || 'Action failed.');
+              } finally {
+                btn.disabled = false;
+              }
+            });
+          });
+        }
+
+        function renderDrafts(drafts){
+          const list = Array.isArray(drafts) ? drafts : [];
+          draftEl.innerHTML = list.length ? list.map(function(d){
+            const inventory = Number.isInteger(Number(d.inventory)) ? Math.max(0, Number(d.inventory)) : 0;
+            const soldOutLabel = inventory <= 0 ? ' <span class="st-chip" style="border-color:#fca5a5;color:#991b1b;">Sold out</span>' : '';
+            return '<article class="st-draft-card" data-draft-id="' + escapeHtml(d.id) + '">'
+              + '<h4>' + escapeHtml(d.title) + soldOutLabel + '</h4>'
+              + '<div class="st-mini-muted">Status: ' + escapeHtml(d.status) + ' · Price: $' + Number(d.price || 0).toFixed(2) + '</div>'
+              + '<div class="st-mini-muted">Max buy: $' + Number(d.buy_price_max || 0).toFixed(2) + '</div>'
+              + '<div class="st-mini-muted">Keywords: ' + escapeHtml((d.search_keywords || []).join(', ')) + '</div>'
+              + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">'
+              + '<label class="st-mini-muted" style="margin:0;">Inventory <input type="number" min="0" step="1" value="' + inventory + '" data-draft-inventory="' + escapeHtml(d.id) + '" style="width:90px;margin-left:6px;" /></label>'
+              + '<button type="button" data-draft-save="' + escapeHtml(d.id) + '">Save</button>'
+              + '</div>'
+            + '</article>';
+          }).join('') : '<div class="st-mini-muted">No AI draft products yet.</div>';
+
+          draftEl.querySelectorAll('button[data-draft-save]').forEach(function(btn){
+            btn.addEventListener('click', async function(){
+              const id = btn.getAttribute('data-draft-save') || '';
+              const invInput = draftEl.querySelector('input[data-draft-inventory="' + id + '"]');
+              const inv = invInput ? Number(invInput.value) : 0;
+              if (!Number.isInteger(inv) || inv < 0) {
+                setStatus('Inventory must be an integer >= 0.');
+                return;
+              }
+
+              btn.disabled = true;
+              try {
+                await api('/.netlify/functions/draft-products', {
+                  method: 'PATCH',
+                  body: JSON.stringify({ id: id, updates: { inventory: inv } }),
+                });
+                setStatus('Draft inventory saved.');
+                await loadDrafts();
+              } catch (e) {
+                setStatus(e.message || 'Failed to save draft.');
+              } finally {
+                btn.disabled = false;
+              }
+            });
+          });
+        }
+
+        async function loadOpportunities(){
+          setStatus('Loading opportunities…');
+          const data = await api('/.netlify/functions/ai-opportunities');
+          renderOpportunities(data.opportunities || []);
+          setStatus('Loaded 3 opportunities.');
+        }
+
+        async function loadDrafts(){
+          const data = await api('/.netlify/functions/draft-products');
+          renderDrafts(data.drafts || []);
+        }
+
+        async function loadAll(){
+          try {
+            await loadOpportunities();
+            await loadDrafts();
+          } catch (e) {
+            setStatus(e.message || 'Failed to load AI sourcing.');
+          }
+        }
+
+        launcher.addEventListener('click', function(){ panel.classList.add('open'); loadAll(); });
+        closeBtn.addEventListener('click', function(){ panel.classList.remove('open'); });
+        document.addEventListener('DOMContentLoaded', loadAll);
+      })();
+    </script>
+
+
+
+<style>
+  .st-db-launcher{position:fixed;left:120px;top:64px;z-index:99998;padding:10px 12px;border-radius:999px;border:1px solid rgba(0,0,0,.12);background:#111827;color:#fff;font:700 12px/1 system-ui,sans-serif;cursor:pointer}
+  .st-db-panel{position:fixed;left:16px;top:108px;width:min(760px,calc(100vw - 32px));max-height:calc(100vh - 124px);overflow:auto;background:#fff;border:1px solid rgba(0,0,0,.12);border-radius:12px;box-shadow:0 16px 38px rgba(0,0,0,.2);z-index:99998;display:none}
+  .st-db-panel.open{display:block}
+  .st-db-pad{padding:10px 12px}
+  .st-db-card{border:1px solid rgba(0,0,0,.12);border-radius:10px;padding:8px;margin-bottom:8px}
+</style>
+<button id="stDbProductsLauncher" class="st-db-launcher" type="button">DB Products</button>
+<section id="stDbProductsPanel" class="st-db-panel">
+  <div class="st-db-pad" style="position:sticky;top:0;background:#fff;border-bottom:1px solid rgba(0,0,0,.08);display:flex;justify-content:space-between;align-items:center;">
+    <strong>Products (DB)</strong><button id="stDbProductsClose" type="button">Close</button>
+  </div>
+  <div class="st-db-pad">
+    <div id="stDbStatus" class="st-mini-muted"></div>
+    <div id="stDbProductsList"></div>
+  </div>
+</section>
+<script>
+(function(){
+  const panel=document.getElementById('stDbProductsPanel');
+  const list=document.getElementById('stDbProductsList');
+  const status=document.getElementById('stDbStatus');
+  const openBtn=document.getElementById('stDbProductsLauncher');
+  const closeBtn=document.getElementById('stDbProductsClose');
+
+  function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+  async function getJwt(){ if(!window.netlifyIdentity) return null; const u=window.netlifyIdentity.currentUser(); if(!u) return null; try{return await u.jwt();}catch(e){return null;} }
+  async function api(url, opts){ const jwt=await getJwt(); if(!jwt) throw new Error('Login required'); const r=await fetch(url,{...(opts||{}),headers:{'Content-Type':'application/json','Authorization':'Bearer '+jwt,...((opts&&opts.headers)||{})}}); const d=await r.json().catch(()=>({})); if(!r.ok||d.ok===false) throw new Error(d.error||('Request failed '+r.status)); return d; }
+  function setStatus(m){status.textContent=m||'';}
+
+  function renderProducts(products){
+    list.innerHTML=(products||[]).map((p)=>{
+      const inv=Number.isInteger(Number(p.inventory))?Number(p.inventory):0;
+      return '<article class="st-db-card" data-id="'+esc(p.id)+'">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><b>'+esc(p.title)+'</b>'+(inv<=0?'<span class="st-chip" style="border-color:#fca5a5;color:#991b1b">Sold out</span>':'')+'</div>'
+      +'<div class="st-mini-muted">ID: '+esc(p.id)+'</div>'
+      +'<div style="display:grid;grid-template-columns:1fr 120px 120px;gap:8px;margin-top:6px;">'
+      +'<input data-field="title" value="'+esc(p.title)+'" />'
+      +'<input data-field="price" type="number" step="0.01" min="0" value="'+Number(p.price||0).toFixed(2)+'" />'
+      +'<input data-field="inventory" type="number" min="0" step="1" value="'+inv+'" />'
+      +'</div>'
+      +'<textarea data-field="description" rows="2" style="width:100%;margin-top:6px;">'+esc(p.description||'')+'</textarea>'
+      +'<div style="display:flex;gap:8px;margin-top:6px;align-items:center;">'
+      +'<select data-field="status"><option value="draft" '+(p.status==='draft'?'selected':'')+'>draft</option><option value="active" '+(p.status==='active'?'selected':'')+'>active</option><option value="archived" '+(p.status==='archived'?'selected':'')+'>archived</option></select>'
+      +'<button data-save="'+esc(p.id)+'" type="button">Save</button>'
+      +'</div></article>';
+    }).join('') || '<div class="st-mini-muted">No products found.</div>';
+
+    list.querySelectorAll('button[data-save]').forEach((btn)=>btn.addEventListener('click', async()=>{
+      const card=btn.closest('[data-id]'); const id=btn.getAttribute('data-save');
+      const title=(card.querySelector('[data-field="title"]').value||'').trim();
+      const description=(card.querySelector('[data-field="description"]').value||'').trim();
+      const price=Number(card.querySelector('[data-field="price"]').value||0);
+      const inventory=Number(card.querySelector('[data-field="inventory"]').value||0);
+      const statusVal=card.querySelector('[data-field="status"]').value;
+      if(!Number.isInteger(inventory)||inventory<0){setStatus('Inventory must be integer >= 0');return;}
+      btn.disabled=true;
+      try{
+        await api('/.netlify/functions/admin-products',{method:'PATCH',body:JSON.stringify({id,updates:{title,description,price,status:statusVal,inventory}})});
+        setStatus('Saved '+id);
+        await loadProducts();
+      }catch(e){setStatus(e.message||'Save failed');}
+      finally{btn.disabled=false;}
+    }));
+  }
+
+  async function loadProducts(){
+    setStatus('Loading products...');
+    try{const d=await api('/.netlify/functions/admin-products'); renderProducts(d.products||[]); setStatus('Loaded products');}
+    catch(e){setStatus(e.message||'Failed to load products');}
+  }
+
+  openBtn.addEventListener('click',()=>{panel.classList.add('open'); loadProducts();});
+  closeBtn.addEventListener('click',()=>panel.classList.remove('open'));
+})();
+</script>
 
 </body>
 </html>

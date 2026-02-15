@@ -82,3 +82,32 @@ To enforce true inventory (prevent oversells), you would add a server-side check
 - For Stripe revenue context in AI responses, also set `STRIPE_SECRET_KEY`.
 - Access is limited to logged-in Netlify Identity users (and `ADMIN_EMAILS` allowlist when configured).
 
+
+## AI Sourcing (Admin)
+- Admin includes **AI Sourcing (Clothes & Shoes)** with exactly 3 queued opportunities at a time.
+- Accepting an opportunity creates an **AI draft product** (stored server-side), declining immediately refreshes the queue back to 3.
+- Data persistence is DB-backed (`products`, `ai_opportunities`, `processed_stripe_sessions`) so publishing and inventory updates do not require redeploys.
+- Storefront reads active products from `/.netlify/functions/active-products` (DB source of truth).
+- Sold-out enforcement uses `inventory`: if `inventory <= 0`, UI shows **Sold out** and checkout is blocked server-side.
+
+### Required environment/config
+- `OPENAI_API_KEY`
+- Netlify Identity enabled for admin (all AI sourcing endpoints require authenticated admin users)
+
+- `STRIPE_SECRET_KEY` (used by checkout creation and webhook inventory decrement)
+- `STRIPE_WEBHOOK_SECRET` (used by `/.netlify/functions/stripe-webhook` signature verification)
+
+## DB-only commerce setup
+1) Ensure `DATABASE_URL` points to your Postgres database.
+2) Run schema:
+   - `psql "$DATABASE_URL" -f db/schema.sql`
+3) Required env vars for commerce:
+   - `DATABASE_URL` (all product/AI/order state)
+   - `STRIPE_SECRET_KEY` (checkout + webhook)
+   - `STRIPE_WEBHOOK_SECRET` (webhook signature verification)
+   - `OPENAI_API_KEY` (AI opportunity generation)
+   - Optional: `URL` or `SITE_URL` for checkout redirects
+
+### Stripe webhook endpoint
+- Configure Stripe webhook to send `checkout.session.completed` to:
+  - `/.netlify/functions/stripe-webhook`

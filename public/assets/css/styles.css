@@ -123,9 +123,21 @@ img { max-width: 100%; display: block; }
 }
 .product { overflow: hidden; }
 .product-media {
+  position: relative;
   display: block; aspect-ratio: 4 / 3; overflow: hidden;
   border-bottom: 1px solid var(--line);
 }
+
+.stock-badge{
+  position:absolute;left:10px;top:10px;z-index:2;
+  font-size:.74rem;font-weight:800;padding:6px 9px;border-radius:999px;
+  border:1px solid rgba(255,255,255,.22);background:rgba(12,12,12,.82);color:#fff;
+}
+.stock-low{ border-color: rgba(245,158,11,.45); background: rgba(245,158,11,.18); }
+.stock-sold{ border-color: rgba(248,113,113,.45); background: rgba(127,29,29,.35); }
+.btn:disabled{ opacity:.55; cursor:not-allowed; transform:none !important; }
+.product-price-lg{ font-size:1.5rem; }
+
 .product-media img {
   width: 100%; height: 100%; object-fit: cover;
   transform: scale(1.02); transition: transform 240ms ease;

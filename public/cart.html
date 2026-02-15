@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Cart | Sawtooth Thrift</title>
+    <link rel="stylesheet" href="/assets/css/styles.css" />
+    <script defer src="/assets/js/cart.js"></script>
+    <script defer src="/assets/js/checkout.js"></script>
+    <script defer src="/assets/js/products-loader.js"></script>
+    <script defer src="/assets/js/cart-page.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span class="brand-text">Sawtooth Thrift</span>
+        </a>
+        <nav class="nav">
+          <a href="/#products">Products</a>
+          <a href="/cart.html">Cart (<span data-cart-count>0</span>)</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="section">
+      <div class="container" style="max-width:900px;">
+        <div class="section-head" style="margin-bottom:10px;">
+          <h1 style="margin:0;">Your cart</h1>
+        </div>
+
+        <div id="cartEmpty" class="card pad hidden">
+          <h3 style="margin-top:0;">Your cart is empty.</h3>
+          <a class="btn" href="/#products">Back to shop</a>
+        </div>
+
+        <div id="cartList" style="display:grid;gap:10px;"></div>
+
+        <div class="card pad" style="margin-top:12px;">
+          <div style="display:flex;justify-content:space-between;"><span class="muted">Subtotal</span><b id="cartSubtotal">$0.00</b></div>
+          <div style="display:flex;justify-content:space-between;margin-top:6px;"><span class="muted">Total</span><b id="cartTotal">$0.00</b></div>
+          <div style="margin-top:12px;display:flex;gap:8px;">
+            <button type="button" class="btn" id="cartCheckoutBtn">Checkout</button>
+            <a class="btn btn-ghost" href="/#products">Keep shopping</a>
+          </div>
+          <div id="cartCheckoutNote" class="muted small" style="margin-top:8px;color:#f59e0b;"></div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <div class="muted small">© Sawtooth Thrift</div>
+        <div class="muted small">Secure payments powered by Stripe</div>
+      </div>
+    </footer>
+  </body>
+</html>
