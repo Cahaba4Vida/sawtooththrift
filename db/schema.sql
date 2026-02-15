@@ -25,6 +25,16 @@ CREATE TABLE IF NOT EXISTS products (
 CREATE INDEX IF NOT EXISTS products_status_idx ON products (status);
 CREATE INDEX IF NOT EXISTS products_created_at_idx ON products (created_at DESC);
 
+CREATE TABLE IF NOT EXISTS product_images (
+  id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  content_type TEXT NOT NULL,
+  bytes BYTEA NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS product_images_product_id_idx ON product_images(product_id);
+
 CREATE TABLE IF NOT EXISTS ai_opportunities (
   opp_id TEXT PRIMARY KEY,
   category TEXT NOT NULL,

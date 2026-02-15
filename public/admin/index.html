@@ -42,6 +42,8 @@
       .products-grid { display:grid; gap:10px; }
       .photo-preview-grid { display:grid; gap:8px; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); }
       .photo-preview-grid img { width:100%; aspect-ratio:1/1; object-fit:cover; border-radius:8px; border:1px solid rgba(255,255,255,.2); }
+      .photo-preview-item { position:relative; }
+      .photo-preview-item .remove-photo-btn { position:absolute; top:4px; right:4px; border:0; border-radius:999px; padding:2px 7px; background:rgba(15,23,42,.9); color:#fff; cursor:pointer; }
       .product-summary { list-style:none; display:flex; justify-content:space-between; align-items:center; gap:10px; cursor:pointer; }
       .product-summary::-webkit-details-marker { display:none; }
       .product-headline { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -61,6 +63,7 @@
           <div class="muted">DB-only dashboard (legacy CMS removed).</div>
         </div>
         <div class="row">
+          <a class="btn ghost" href="/" id="backToStoreBtn">Back to storefront</a>
           <button class="btn ghost" id="refreshAllBtn" type="button">Refresh active tab</button>
           <button class="btn ghost" id="logoutBtn" type="button">Logout</button>
         </div>
@@ -70,6 +73,7 @@
         <button class="tab-btn active" data-tab="ai" type="button">AI Sourcing</button>
         <button class="tab-btn" data-tab="products" type="button">DB Products</button>
         <button class="tab-btn" data-tab="orders" type="button">Orders</button>
+        <button class="tab-btn" data-tab="revenue" type="button">Revenue</button>
       </nav>
 
       <section class="status" id="globalStatus" aria-live="polite"></section>
@@ -125,7 +129,7 @@
           </div>
           <div class="field"><label>Status</label><select id="newStatus"><option value="draft" selected>draft</option><option value="active">active</option></select></div>
           <div class="field"><label>Description</label><textarea id="newDescription"></textarea></div>
-          <div class="field"><label>Photos</label><input id="newPhotoInput" type="file" accept="image/*" capture="environment" multiple /><div class="muted">Tap to add photos. On supported phones this opens camera first.</div><div id="newPhotoPreviews" class="photo-preview-grid"></div></div>
+          <div class="field"><label>Photos (optional)</label><div class="row"><button class="btn ghost" id="newAddPhotosBtn" type="button">Add photos</button><input id="newPhotoInput" type="file" accept="image/*" capture="environment" multiple class="hidden" /></div><div class="muted">On supported phones, Add photos opens camera or photo library.</div><div id="newPhotoPreviews" class="photo-preview-grid"></div></div>
           <div class="row">
             <button class="btn" id="createProductBtn" type="button">Create Product</button>
             <button class="btn ghost" id="cancelProductBtn" type="button">Cancel</button>
@@ -148,14 +152,32 @@
         </div>
         <div class="grid" id="ordersList"></div>
       </section>
+
+      <section class="panel" id="tab-revenue">
+        <h2 style="margin-top:0">Revenue</h2>
+        <p class="muted">Stripe paid checkout stats for the last 7 and 30 days.</p>
+        <div class="row" style="margin-bottom:8px;">
+          <button class="btn" id="revenueRefreshBtn" type="button">Refresh revenue</button>
+        </div>
+        <div class="split" id="revenueStats">
+          <article class="card">
+            <h3 style="margin-top:0">Last 7 days</h3>
+            <div class="muted" data-rev-7d>Loading…</div>
+          </article>
+          <article class="card">
+            <h3 style="margin-top:0">Last 30 days</h3>
+            <div class="muted" data-rev-30d>Loading…</div>
+          </article>
+        </div>
+      </section>
     </main>
 
     <script>
       (function(){
         const $ = (sel) => document.querySelector(sel);
         const $$ = (sel) => Array.from(document.querySelectorAll(sel));
-        const state = { activeTab: 'ai', products: [], drafts: [], dbTables: null, newPhotoFiles: [], newPhotoPreviewUrls: [] };
-        const REQUIRED_TABLES = ['products', 'ai_opportunities', 'processed_stripe_sessions'];
+        const state = { activeTab: 'ai', products: [], drafts: [], dbTables: null, newPhotoFiles: [], newPhotoPreviewUrls: [], photoDrafts: {} };
+        const REQUIRED_TABLES = ['products', 'product_images', 'ai_opportunities', 'processed_stripe_sessions'];
 
         function esc(s){ return String(s||'').replace(/[&<>"']/g, (c)=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
         function money(n){ const v=Number(n||0); return Number.isFinite(v) ? `$${v.toFixed(2)}` : '$0.00'; }
@@ -196,10 +218,11 @@
         }
 
 
-        async function uploadPhotoFile(file){
+        async function uploadPhotoFile(file, productId){
           const uploadOnce = async (url)=>{
             const form = new FormData();
             form.append('file', file);
+            form.append('product_id', productId);
             const res = await fetch(url, { method:'POST', credentials:'include', body: form });
             const data = await res.json().catch(()=>({}));
             return { res, data };
@@ -215,13 +238,28 @@
 
         function renderNewPhotoPreviews(){
           const wrap = $('#newPhotoPreviews');
-          wrap.innerHTML = state.newPhotoPreviewUrls.map((url)=>`<img src="${esc(url)}" alt="Selected photo preview" />`).join('');
+          wrap.innerHTML = state.newPhotoPreviewUrls.map((url, idx)=>`<div class="photo-preview-item"><img src="${esc(url)}" alt="Selected photo preview" /><button class="remove-photo-btn" data-remove-new-photo="${idx}" type="button">×</button></div>`).join('');
+          wrap.querySelectorAll('[data-remove-new-photo]').forEach((btn)=>btn.addEventListener('click', ()=>{
+            const idx = Number(btn.getAttribute('data-remove-new-photo'));
+            if (!Number.isInteger(idx) || idx < 0) return;
+            removeNewPhotoAt(idx);
+          }));
+        }
+
+        function removeNewPhotoAt(index){
+          const removedPreview = state.newPhotoPreviewUrls[index];
+          if (removedPreview) URL.revokeObjectURL(removedPreview);
+          state.newPhotoFiles.splice(index, 1);
+          state.newPhotoPreviewUrls.splice(index, 1);
+          renderNewPhotoPreviews();
         }
 
         function setNewPhotoFiles(fileList){
-          state.newPhotoPreviewUrls.forEach((u)=>URL.revokeObjectURL(u));
-          state.newPhotoFiles = Array.from(fileList || []);
-          state.newPhotoPreviewUrls = state.newPhotoFiles.map((f)=>URL.createObjectURL(f));
+          const incoming = Array.from(fileList || []);
+          for (const file of incoming) {
+            state.newPhotoFiles.push(file);
+            state.newPhotoPreviewUrls.push(URL.createObjectURL(file));
+          }
           renderNewPhotoPreviews();
         }
 
@@ -391,6 +429,7 @@
           setStatus('Loading products…');
           const data = await api('/.netlify/functions/admin-products');
           state.products = Array.isArray(data.products) ? data.products : [];
+          state.photoDrafts = Object.fromEntries(state.products.map((p)=>[String(p.id), Array.isArray(p.photos) ? [...p.photos] : []]));
           renderProducts(state.products);
           setStatus('Loaded products.');
         }
@@ -402,7 +441,10 @@
           $('#newStatus').value = 'draft';
           $('#newDescription').value = '';
           $('#newPhotoInput').value = '';
-          setNewPhotoFiles([]);
+          state.newPhotoPreviewUrls.forEach((u)=>URL.revokeObjectURL(u));
+          state.newPhotoFiles = [];
+          state.newPhotoPreviewUrls = [];
+          renderNewPhotoPreviews();
         }
 
         function filteredProducts(items){
@@ -420,6 +462,63 @@
           });
         }
 
+
+        function renderProductPhotoManager(card, productId, status){
+          const wrap = card.querySelector('[data-photo-manager]');
+          if (!wrap) return;
+          const photos = Array.isArray(state.photoDrafts[productId]) ? state.photoDrafts[productId] : [];
+          if (status === 'archived') {
+            wrap.innerHTML = '<div class="muted">Photo upload is disabled for archived products.</div>';
+            return;
+          }
+
+          wrap.innerHTML = `
+            <div class="row" style="margin-bottom:6px;">
+              <button class="btn ghost" data-add-photos type="button">Add photos</button>
+              <input data-photo-input type="file" accept="image/*" capture="environment" multiple class="hidden" />
+            </div>
+            <div class="photo-preview-grid">
+              ${photos.map((url, index)=>`<div class="photo-preview-item"><img src="${esc(url)}" alt="Product photo" /><button class="remove-photo-btn" data-remove-photo="${index}" type="button">×</button></div>`).join('')}
+            </div>
+          `;
+
+          const addBtn = wrap.querySelector('[data-add-photos]');
+          const input = wrap.querySelector('[data-photo-input]');
+          if (addBtn && input) {
+            addBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); input.click(); });
+            input.addEventListener('click', (e)=>{ e.stopPropagation(); });
+            input.addEventListener('change', async (e)=>{
+              const files = Array.from(e.target.files || []);
+              if (!files.length) return;
+              addBtn.disabled = true;
+              try {
+                for (const file of files) {
+                  const uploadedUrl = await uploadPhotoFile(file, productId);
+                  photos.push(uploadedUrl);
+                }
+                state.photoDrafts[productId] = photos;
+                renderProductPhotoManager(card, productId, status);
+                setStatus('Photo upload complete.');
+              } catch (err) {
+                setStatus(err.message || 'Photo upload failed.', true);
+              } finally {
+                addBtn.disabled = false;
+                input.value = '';
+              }
+            });
+          }
+
+          wrap.querySelectorAll('[data-remove-photo]').forEach((btn)=>btn.addEventListener('click', (e)=>{
+            e.preventDefault();
+            e.stopPropagation();
+            const idx = Number(btn.getAttribute('data-remove-photo'));
+            if (!Number.isInteger(idx) || idx < 0) return;
+            photos.splice(idx, 1);
+            state.photoDrafts[productId] = photos;
+            renderProductPhotoManager(card, productId, status);
+          }));
+        }
+
         function renderProducts(items){
           const el = $('#productsList');
           const list = filteredProducts(items);
@@ -431,10 +530,6 @@
             const quickLabel = status === 'active' ? 'Unpublish' : 'Publish';
             const archiveLabel = status === 'archived' ? 'Restore' : 'Archive';
             const archiveStatus = status === 'archived' ? 'draft' : 'archived';
-            const photosText = Array.isArray(p.photos) ? p.photos.join('\n') : '';
-            const photosField = status === 'archived'
-              ? '<div class="muted">Photo upload is disabled for archived products.</div>'
-              : `<div class="field"><label>Photos (one URL per line)</label><textarea data-field="photos">${esc(photosText)}</textarea></div>`;
             return `<details class="card" data-id="${esc(p.id)}">
               <summary class="product-summary">
                 <div class="product-headline">
@@ -456,10 +551,16 @@
               </div>
               <div class="field"><label>Status</label><select data-field="status"><option value="draft" ${p.status==='draft'?'selected':''}>draft</option><option value="active" ${p.status==='active'?'selected':''}>active</option><option value="archived" ${p.status==='archived'?'selected':''}>archived</option></select></div>
               <div class="field"><label>Description</label><textarea data-field="description">${esc(p.description||'')}</textarea></div>
-              ${photosField}
+              <div class="field"><label>Photos (optional)</label><div data-photo-manager></div></div>
               <button class="btn" data-save type="button">Save</button>
             </details>`;
           }).join('');
+
+          el.querySelectorAll('[data-id]').forEach((card)=>{
+            const id = card.getAttribute('data-id');
+            const product = list.find((p)=>String(p.id) === String(id));
+            renderProductPhotoManager(card, id, String(product && product.status || 'draft').toLowerCase());
+          });
 
           el.querySelectorAll('button[data-quick-status]').forEach((btn)=>btn.addEventListener('click', async (e)=>{
             e.preventDefault();
@@ -501,8 +602,7 @@
             const id = card.getAttribute('data-id');
             const inventory = Number(card.querySelector('[data-field="inventory"]').value || 0);
             const price = Number(card.querySelector('[data-field="price"]').value || 0);
-            const photosField = card.querySelector('[data-field="photos"]');
-            const photos = photosField ? photosField.value.split(/\n/).map((x)=>x.trim()).filter(Boolean) : [];
+            const photos = Array.isArray(state.photoDrafts[id]) ? state.photoDrafts[id] : [];
             if (!Number.isInteger(inventory) || inventory < 0) { setStatus('Inventory must be integer >= 0.', true); return; }
             if (!Number.isFinite(price) || price < 0) { setStatus('Price must be >= 0.', true); return; }
             btn.disabled = true;
@@ -523,6 +623,28 @@
             } catch (e3) { setStatus(e3.message||'Save failed', true); }
             finally { btn.disabled = false; }
           }));
+        }
+
+        function formatUsdFromCents(cents){
+          return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((Number(cents || 0) / 100));
+        }
+
+        function renderRevenue(stats){
+          const seven = stats && stats.window_7d ? stats.window_7d : { grossCents: 0, orderCount: 0, avgOrderCents: 0 };
+          const thirty = stats && stats.window_30d ? stats.window_30d : { grossCents: 0, orderCount: 0, avgOrderCents: 0 };
+
+          const sevenEl = document.querySelector('[data-rev-7d]');
+          const thirtyEl = document.querySelector('[data-rev-30d]');
+
+          sevenEl.innerHTML = `Gross: <strong>${formatUsdFromCents(seven.grossCents)}</strong><br/>Orders: <strong>${Number(seven.orderCount || 0)}</strong><br/>Avg order: <strong>${formatUsdFromCents(seven.avgOrderCents)}</strong>`;
+          thirtyEl.innerHTML = `Gross: <strong>${formatUsdFromCents(thirty.grossCents)}</strong><br/>Orders: <strong>${Number(thirty.orderCount || 0)}</strong><br/>Avg order: <strong>${formatUsdFromCents(thirty.avgOrderCents)}</strong>`;
+        }
+
+        async function loadRevenue(){
+          setStatus('Loading revenue…');
+          const data = await api('/.netlify/functions/stripe-revenue-stats');
+          renderRevenue(data.stats || null);
+          setStatus('Loaded revenue stats.');
         }
 
         async function loadOrders(){
@@ -620,6 +742,7 @@
             if (state.activeTab === 'ai') return await loadAi();
             if (state.activeTab === 'products') return await loadProducts();
             if (state.activeTab === 'orders') return await loadOrders();
+            if (state.activeTab === 'revenue') return await loadRevenue();
           } catch (e) { setStatus(e.message||'Refresh failed', true); }
         }
 
@@ -627,6 +750,7 @@
         $('#aiRefreshBtn').addEventListener('click', refreshActive);
         $('#productsRefreshBtn').addEventListener('click', refreshActive);
         $('#ordersRefreshBtn').addEventListener('click', refreshActive);
+        $('#revenueRefreshBtn').addEventListener('click', refreshActive);
         $('#orderStatus').addEventListener('change', ()=>{ if(state.activeTab==='orders') refreshActive(); });
         $('#orderSearch').addEventListener('keydown', (e)=>{ if(e.key==='Enter') refreshActive(); });
         $('#refreshAllBtn').addEventListener('click', refreshActive);
@@ -634,8 +758,13 @@
           $('#newProductForm').classList.remove('hidden');
         });
 
+        $('#newAddPhotosBtn').addEventListener('click', ()=>{
+          $('#newPhotoInput').click();
+        });
+
         $('#newPhotoInput').addEventListener('change', (e)=>{
           setNewPhotoFiles(e.target.files);
+          e.target.value = '';
         });
 
         ['input','change'].forEach((evt)=>{
@@ -664,16 +793,26 @@
 
           btn.disabled = true;
           try {
+            const created = await api('/.netlify/functions/admin-products', {
+              method: 'POST',
+              body: JSON.stringify({ title, price, inventory, status, description, photos: [] })
+            });
+
+            const productId = created && created.product && created.product.id;
             const photos = [];
-            for (const file of state.newPhotoFiles) {
-              const uploadedUrl = await uploadPhotoFile(file);
-              photos.push(uploadedUrl);
+            if (productId) {
+              for (const file of state.newPhotoFiles) {
+                const uploadedUrl = await uploadPhotoFile(file, productId);
+                photos.push(uploadedUrl);
+              }
+              if (photos.length) {
+                await api('/.netlify/functions/admin-products', {
+                  method: 'PATCH',
+                  body: JSON.stringify({ id: productId, updates: { photos } })
+                });
+              }
             }
 
-            await api('/.netlify/functions/admin-products', {
-              method: 'POST',
-              body: JSON.stringify({ title, price, inventory, status, description, photos })
-            });
             await loadProducts();
             $('#newProductForm').classList.add('hidden');
             resetNewProductForm();
