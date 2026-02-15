@@ -51,6 +51,20 @@ async function ensureProductColumns() {
   await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ`);
 }
 
+
+async function ensureProductImagesTable() {
+  await query(`
+    CREATE TABLE IF NOT EXISTS product_images (
+      id TEXT PRIMARY KEY,
+      product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      content_type TEXT NOT NULL,
+      bytes BYTEA NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS product_images_product_id_idx ON product_images(product_id)`);
+}
+
 exports.handler = async (event, _context) => {
   try {
     try {
@@ -60,6 +74,7 @@ exports.handler = async (event, _context) => {
     }
 
     await ensureProductColumns();
+    await ensureProductImagesTable();
 
     if (event.httpMethod === 'GET') {
       const { rows } = await query(`SELECT * FROM products ORDER BY created_at DESC`);
