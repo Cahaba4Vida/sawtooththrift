@@ -20,6 +20,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
     <link rel="preload" href="/assets/css/styles.css" as="style" />
     <link rel="stylesheet" href="/assets/css/styles.css" />
+    <script defer src="/assets/js/cart.js"></script>
+    <script defer src="/assets/js/checkout.js"></script>
+    <script defer src="/assets/js/products-loader.js"></script>
     <script defer src="/assets/js/product.js"></script>
     <script type="application/ld+json">
 {
@@ -55,6 +58,7 @@
         <nav class="nav">
           <a href="/#products">Products</a>
           <a href="/#contact">Contact</a>
+          <a href="/cart.html">Cart (<span data-cart-count>0</span>)</a>
         </nav>
       </div>
     </header>
@@ -80,6 +84,7 @@
           <a href="/terms.html">Terms</a>
         </div>
 
+        <div class="muted small">Secure payments powered by Stripe</div>
       </div>
     </footer>
 </body>

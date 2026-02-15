@@ -25,6 +25,9 @@
 
     <link rel="preload" href="/assets/css/styles.css" as="style" />
     <link rel="stylesheet" href="/assets/css/styles.css" />
+    <script defer src="/assets/js/cart.js"></script>
+    <script defer src="/assets/js/checkout.js"></script>
+    <script defer src="/assets/js/products-loader.js"></script>
     <script defer src="/assets/js/app.js"></script>
     <script type="application/ld+json">
 {
@@ -84,6 +87,7 @@
         <nav class="nav">
           <a href="#products">Products</a>
           <a href="#contact">Contact</a>
+          <a href="/cart.html">Cart (<span data-cart-count>0</span>)</a>
 </nav>
       </div>
     </header>
@@ -264,6 +268,7 @@
 
         <div class="muted small">Powered by zachedwardsllc.com</div>
         <a class="btn btn-ghost" href="/admin/" aria-label="Open admin login">Admin</a>
+        <div class="muted small">Secure payments powered by Stripe</div>
       </div>
     </footer>
     

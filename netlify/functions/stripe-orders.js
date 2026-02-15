@@ -1,12 +1,4 @@
-/**
- * Netlify Function: stripe-orders
- * Admin-only helper to fetch latest paid checkout session for a Stripe payment link.
- *
- * Required env:
- *   STRIPE_SECRET_KEY
- * Optional env:
- *   ADMIN_EMAILS (comma-separated allowlist)
- */
+const Stripe = require("stripe");
 
 function json(statusCode, body) {
   return {
@@ -16,43 +8,7 @@ function json(statusCode, body) {
   };
 }
 
-function normalizeEmailList(v) {
-  if (!v) return null;
-  const arr = String(v)
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  return arr.length ? arr : null;
-}
-
-async function stripeGet(path, secretKey) {
-  const url = "https://api.stripe.com" + path;
-  const res = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${secretKey}`,
-      "Stripe-Version": "2024-06-20",
-    },
-  });
-
-  const text = await res.text();
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    data = { raw: text };
-  }
-
-  if (!res.ok) {
-    const msg = data && data.error && data.error.message ? data.error.message : "Stripe API error";
-    const status = res.status || 500;
-    throw Object.assign(new Error(msg), { status, stripe: data });
-  }
-
-  return data;
-}
-
-function extractRecipient(session) {
+function normalizeRecipient(session) {
   const shipping = session && session.shipping_details ? session.shipping_details : null;
   const customer = session && session.customer_details ? session.customer_details : null;
   const addr = (shipping && shipping.address) || (customer && customer.address) || {};
@@ -64,64 +20,81 @@ function extractRecipient(session) {
     city: addr.city || "",
     state: addr.state || "",
     zip: addr.postal_code || "",
-    country: addr.country || "US",
-    email: (customer && customer.email) || "",
+    country: addr.country || "",
   };
 }
 
-function hasRequiredAddress(recipient) {
-  return !!(recipient && recipient.name && recipient.line1 && recipient.city && recipient.state && recipient.zip);
+function normalizeItems(lineItems) {
+  return (lineItems || []).map((item) => {
+    const price = item && item.price ? item.price : null;
+    return {
+      name: (item && item.description) || (price && price.nickname) || "Item",
+      quantity: (item && item.quantity) || 1,
+      unit_amount: price && typeof price.unit_amount === "number" ? price.unit_amount : null,
+      currency: (price && price.currency) || (item && item.currency) || "usd",
+    };
+  });
 }
 
 exports.handler = async (event, context) => {
   try {
+    const user = context && context.clientContext && context.clientContext.user;
+    if (!user) return json(401, { ok: false, error: "Unauthorized" });
+
     const secretKey = process.env.STRIPE_SECRET_KEY;
     if (!secretKey) return json(500, { ok: false, error: "Missing STRIPE_SECRET_KEY env var." });
 
-    const user = context && context.clientContext && context.clientContext.user;
-    if (!user) return json(401, { ok: false, error: "Unauthorized (login required)." });
+    const stripe = new Stripe(secretKey);
+    const rawLimit = parseInt(event?.queryStringParameters?.limit || "50", 10);
+    const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 50, 1), 100);
 
-    const allow = normalizeEmailList(process.env.ADMIN_EMAILS);
-    const email = (user.email || "").toLowerCase();
-    if (allow && !allow.includes(email)) {
-      return json(403, { ok: false, error: "Forbidden (not in ADMIN_EMAILS)." });
-    }
+    const rawStatus = String(event?.queryStringParameters?.status || "unshipped").toLowerCase();
+    const status = rawStatus === "shipped" || rawStatus === "all" ? rawStatus : "unshipped";
+    const q = String(event?.queryStringParameters?.q || "").trim().toLowerCase();
 
-    const paymentLinkId = event && event.queryStringParameters ? String(event.queryStringParameters.payment_link_id || "").trim() : "";
-    if (!paymentLinkId) {
-      return json(400, { ok: false, error: "Missing payment_link_id query parameter." });
-    }
-
-    const params = new URLSearchParams();
-    params.set("limit", "25");
-    params.set("payment_link", paymentLinkId);
-    params.set("payment_status", "paid");
-    params.append("expand[]", "data.customer_details");
-    params.append("expand[]", "data.shipping_details");
-
-    const data = await stripeGet(`/v1/checkout/sessions?${params.toString()}`, secretKey);
-    const sessions = Array.isArray(data.data) ? data.data : [];
-
-    const best = sessions
-      .map((s) => ({ session: s, recipient: extractRecipient(s) }))
-      .find((x) => hasRequiredAddress(x.recipient));
-
-    if (!best) {
-      return json(200, { ok: true, order: null, message: "No paid order with full shipping address found yet." });
-    }
-
-    return json(200, {
-      ok: true,
-      order: {
-        id: best.session.id,
-        created: best.session.created || null,
-        payment_link: best.session.payment_link || paymentLinkId,
-        customer_email: best.recipient.email || "",
-        recipient: best.recipient,
-      },
+    const sessionsResp = await stripe.checkout.sessions.list({
+      limit,
+      payment_status: "paid",
+      expand: ["data.customer_details", "data.shipping_details", "data.payment_intent"],
     });
+
+    const sessions = Array.isArray(sessionsResp.data) ? sessionsResp.data : [];
+
+    const orders = await Promise.all(
+      sessions.map(async (session) => {
+        const lineItemsResp = await stripe.checkout.sessions.listLineItems(session.id, {
+          limit: 100,
+          expand: ["data.price"],
+        });
+
+        const metadata = session && session.metadata ? session.metadata : {};
+        const fulfillment_status = metadata.fulfillment_status === "shipped" ? "shipped" : "unshipped";
+
+        return {
+          id: session.id,
+          created: session.created || 0,
+          customer_email: (session.customer_details && session.customer_details.email) || session.customer_email || "",
+          recipient: normalizeRecipient(session),
+          items: normalizeItems(lineItemsResp.data),
+          amount_total: typeof session.amount_total === "number" ? session.amount_total : null,
+          currency: session.currency || "usd",
+          fulfillment_status,
+          tracking: metadata.tracking || "",
+          shipped_at: metadata.shipped_at || "",
+        };
+      })
+    );
+
+    const filtered = orders
+      .filter((order) => {
+        if (status !== "all" && order.fulfillment_status !== status) return false;
+        if (!q) return true;
+        return order.id.toLowerCase().includes(q) || String(order.customer_email || "").toLowerCase().includes(q);
+      })
+      .sort((a, b) => (b.created || 0) - (a.created || 0));
+
+    return json(200, { ok: true, orders: filtered });
   } catch (err) {
-    const statusCode = err && err.status ? err.status : 500;
-    return json(statusCode, { ok: false, error: err.message || "Server error" });
+    return json(500, { ok: false, error: err && err.message ? err.message : "Server error" });
   }
 };
