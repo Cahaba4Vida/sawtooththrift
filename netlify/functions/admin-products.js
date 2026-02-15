@@ -1,10 +1,9 @@
-const { query } = require('./_db');
+const { query, withTransaction } = require('./_db');
 const { requireAdmin, authErrorResponse } = require('./_adminAuth');
 
 function json(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(body) };
 }
-
 
 function parseBody(event) {
   if (!event || !event.body) return {};
@@ -47,6 +46,11 @@ function toProduct(row) {
   };
 }
 
+async function ensureProductColumns() {
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS sold_out_since TIMESTAMPTZ`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ`);
+}
+
 exports.handler = async (event, _context) => {
   try {
     try {
@@ -54,6 +58,8 @@ exports.handler = async (event, _context) => {
     } catch (err) {
       return authErrorResponse(err);
     }
+
+    await ensureProductColumns();
 
     if (event.httpMethod === 'GET') {
       const { rows } = await query(`SELECT * FROM products ORDER BY created_at DESC`);
@@ -66,44 +72,80 @@ exports.handler = async (event, _context) => {
       if (!id) return json(400, { ok: false, error: 'Missing id' });
       const updates = body.updates && typeof body.updates === 'object' ? body.updates : body;
 
-      const fields = [];
-      const values = [];
-      const push = (col, val) => { fields.push(`${col}=$${values.length + 1}`); values.push(val); };
+      const updated = await withTransaction(async (client) => {
+        const currentRes = await client.query('SELECT * FROM products WHERE id=$1 FOR UPDATE', [id]);
+        if (!currentRes.rows.length) return null;
+        const current = currentRes.rows[0];
 
-      if (updates.title != null) push('title', String(updates.title).trim());
-      if (updates.description != null) push('description', String(updates.description));
-      if (updates.currency != null) push('currency', String(updates.currency).toLowerCase().trim() || 'usd');
-      if (updates.photos != null) push('photos', JSON.stringify(Array.isArray(updates.photos) ? updates.photos : []));
-      if (updates.tags != null) push('tags', JSON.stringify(Array.isArray(updates.tags) ? updates.tags : []));
-      if (updates.search_keywords != null) push('search_keywords', JSON.stringify(Array.isArray(updates.search_keywords) ? updates.search_keywords : []));
-      if (updates.source_notes != null) push('source_notes', String(updates.source_notes));
-      if (updates.buy_price_max_cents != null) {
-        const v = Number(updates.buy_price_max_cents);
-        if (!Number.isInteger(v) || v < 0) return json(400, { ok: false, error: 'buy_price_max_cents must be >= 0' });
-        push('buy_price_max_cents', v);
-      }
-      if (updates.inventory != null) {
-        const inv = Number(updates.inventory);
-        if (!Number.isInteger(inv) || inv < 0) return json(400, { ok: false, error: 'inventory must be integer >= 0' });
-        push('inventory', inv);
-      }
-      if (updates.status != null) {
-        const status = String(updates.status).toLowerCase().trim();
-        if (!['draft', 'active', 'archived'].includes(status)) return json(400, { ok: false, error: 'Invalid status' });
-        push('status', status);
-      }
-      if (updates.price_cents != null || updates.price != null) {
-        const cents = updates.price_cents != null ? Number(updates.price_cents) : Math.round(Number(updates.price) * 100);
-        if (!Number.isInteger(cents) || cents < 0) return json(400, { ok: false, error: 'price must be >= 0' });
-        push('price_cents', cents);
-      }
+        const fields = [];
+        const values = [];
+        const push = (col, val) => { fields.push(`${col}=$${values.length + 1}`); values.push(val); };
 
-      if (!fields.length) return json(400, { ok: false, error: 'No valid updates' });
-      fields.push(`updated_at=now()`);
-      values.push(id);
-      const { rows } = await query(`UPDATE products SET ${fields.join(', ')} WHERE id=$${values.length} RETURNING *`, values);
-      if (!rows.length) return json(404, { ok: false, error: 'Product not found' });
-      return json(200, { ok: true, product: toProduct(rows[0]) });
+        let nextInventory = current.inventory;
+        let inventoryProvided = false;
+        let nextStatus = String(current.status || 'draft').toLowerCase();
+        let statusProvided = false;
+
+        if (updates.title != null) push('title', String(updates.title).trim());
+        if (updates.description != null) push('description', String(updates.description));
+        if (updates.currency != null) push('currency', String(updates.currency).toLowerCase().trim() || 'usd');
+        if (updates.photos != null) push('photos', JSON.stringify(Array.isArray(updates.photos) ? updates.photos : []));
+        if (updates.tags != null) push('tags', JSON.stringify(Array.isArray(updates.tags) ? updates.tags : []));
+        if (updates.search_keywords != null) push('search_keywords', JSON.stringify(Array.isArray(updates.search_keywords) ? updates.search_keywords : []));
+        if (updates.source_notes != null) push('source_notes', String(updates.source_notes));
+        if (updates.buy_price_max_cents != null) {
+          const v = Number(updates.buy_price_max_cents);
+          if (!Number.isInteger(v) || v < 0) throw Object.assign(new Error('buy_price_max_cents must be >= 0'), { statusCode: 400 });
+          push('buy_price_max_cents', v);
+        }
+        if (updates.inventory != null) {
+          const inv = Number(updates.inventory);
+          if (!Number.isInteger(inv) || inv < 0) throw Object.assign(new Error('inventory must be integer >= 0'), { statusCode: 400 });
+          nextInventory = inv;
+          inventoryProvided = true;
+          push('inventory', inv);
+        }
+        if (updates.status != null) {
+          const status = String(updates.status).toLowerCase().trim();
+          if (!['draft', 'active', 'archived'].includes(status)) throw Object.assign(new Error('Invalid status'), { statusCode: 400 });
+          nextStatus = status;
+          statusProvided = true;
+          push('status', status);
+        }
+        if (updates.price_cents != null || updates.price != null) {
+          const cents = updates.price_cents != null ? Number(updates.price_cents) : Math.round(Number(updates.price) * 100);
+          if (!Number.isInteger(cents) || cents < 0) throw Object.assign(new Error('price must be >= 0'), { statusCode: 400 });
+          push('price_cents', cents);
+        }
+
+        if (inventoryProvided) {
+          const prevInventory = Number(current.inventory || 0);
+          if (nextInventory > 0) {
+            push('sold_out_since', null);
+          } else if (nextInventory <= 0 && prevInventory > 0) {
+            push('sold_out_since', new Date().toISOString());
+          }
+        }
+
+        if (statusProvided) {
+          const prevStatus = String(current.status || '').toLowerCase();
+          if (nextStatus === 'archived') {
+            push('archived_at', new Date().toISOString());
+          } else if (prevStatus === 'archived' && nextStatus !== 'archived') {
+            push('archived_at', null);
+          }
+        }
+
+        if (!fields.length) throw Object.assign(new Error('No valid updates'), { statusCode: 400 });
+
+        fields.push('updated_at=now()');
+        values.push(id);
+        const { rows } = await client.query(`UPDATE products SET ${fields.join(', ')} WHERE id=$${values.length} RETURNING *`, values);
+        return rows[0] || null;
+      });
+
+      if (!updated) return json(404, { ok: false, error: 'Product not found' });
+      return json(200, { ok: true, product: toProduct(updated) });
     }
 
     if (event.httpMethod === 'POST') {
@@ -125,11 +167,14 @@ exports.handler = async (event, _context) => {
       const cents = body.price_cents != null ? Number(body.price_cents) : Math.round(Number(body.price) * 100);
       if (!Number.isInteger(cents) || cents < 0) return json(400, { ok: false, error: 'price must be >= 0' });
 
+      const soldOutSince = inventory <= 0 ? new Date().toISOString() : null;
+      const archivedAt = status === 'archived' ? new Date().toISOString() : null;
+
       const { rows } = await query(
-        `INSERT INTO products (id, status, title, description, price_cents, currency, photos, inventory)
-         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8)
+        `INSERT INTO products (id, status, title, description, price_cents, currency, photos, inventory, sold_out_since, archived_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10)
          RETURNING *`,
-        [id, status, title, description, cents, currency, JSON.stringify(photos), inventory]
+        [id, status, title, description, cents, currency, JSON.stringify(photos), inventory, soldOutSince, archivedAt]
       );
 
       return json(201, { ok: true, product: toProduct(rows[0]) });
@@ -140,6 +185,6 @@ exports.handler = async (event, _context) => {
     if (isMissingTablesError(err)) {
       return json(500, { ok: false, error: 'DB tables missing. Go to Settings -> Initialize Database.' });
     }
-    return json(500, { ok: false, error: err.message || 'Server error' });
+    return json(err.statusCode || 500, { ok: false, error: err.message || 'Server error' });
   }
 };

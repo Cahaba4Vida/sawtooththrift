@@ -70,5 +70,7 @@ function formatOpp(row) {
     suggested_price: Number((Number(row.suggested_price_cents || 0) / 100).toFixed(2)),
     margin_estimate: row.expected_margin_pct != null ? `${row.expected_margin_pct}%` : '',
     checklist: Array.isArray(row.condition_checklist) ? row.condition_checklist : [],
+    buy_links: Array.isArray(row.buy_links) ? row.buy_links : [],
+    local_pickup: Array.isArray(row.local_pickup) ? row.local_pickup : [],
   };
 }

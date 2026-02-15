@@ -25,7 +25,7 @@ exports.handler = async (event, _context) => {
     }
 
     if (event.httpMethod === 'GET') {
-      const { rows } = await query(`SELECT * FROM products WHERE status='draft' ORDER BY created_at DESC`);
+      const { rows } = await query(`SELECT * FROM products WHERE tags ? 'ai-draft' AND status IN ('draft','active') ORDER BY created_at DESC`);
       return json(200, { ok: true, drafts: rows.map(formatDraft) });
     }
 
@@ -45,7 +45,11 @@ exports.handler = async (event, _context) => {
       }
       if (updates.title != null) add('title', String(updates.title));
       if (updates.description != null) add('description', String(updates.description));
-      if (updates.status != null) add('status', String(updates.status));
+      if (updates.status != null) {
+        const status = String(updates.status).toLowerCase().trim();
+        if (!['draft', 'active', 'archived'].includes(status)) return json(400, { ok: false, error: 'Invalid status' });
+        add('status', status);
+      }
       if (updates.price != null || updates.price_cents != null) {
         const cents = updates.price_cents != null ? Number(updates.price_cents) : Math.round(Number(updates.price) * 100);
         if (!Number.isInteger(cents) || cents < 0) return json(400, { ok: false, error: 'price must be >= 0' });
@@ -57,7 +61,7 @@ exports.handler = async (event, _context) => {
       vals.push(id);
       const { rows } = await query(`UPDATE products SET ${sets.join(', ')} WHERE id=$${vals.length} RETURNING *`, vals);
       if (!rows.length) return json(404, { ok: false, error: 'Draft not found' });
-      const drafts = await query(`SELECT * FROM products WHERE status='draft' ORDER BY created_at DESC`);
+      const drafts = await query(`SELECT * FROM products WHERE tags ? 'ai-draft' AND status IN ('draft','active') ORDER BY created_at DESC`);
       return json(200, { ok: true, draft: formatDraft(rows[0]), drafts: drafts.rows.map(formatDraft) });
     }
 

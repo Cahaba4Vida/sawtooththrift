@@ -10,6 +10,35 @@ function toCents(value, fallback) {
   return Math.round(n * 100);
 }
 
+function createSearchQuery(raw) {
+  const keywords = Array.isArray(raw.search_keywords) ? raw.search_keywords.map(String).map((s) => s.trim()).filter(Boolean) : [];
+  const base = [raw.title, ...keywords].map((s) => String(s || '').trim()).filter(Boolean).slice(0, 6).join(' ');
+  return base || String(raw.title || 'thrift finds').trim() || 'thrift finds';
+}
+
+function buildBuyLinks(raw) {
+  const q = createSearchQuery(raw);
+  const enc = encodeURIComponent(q);
+  return [
+    { label: 'eBay', url: `https://www.ebay.com/sch/i.html?_nkw=${enc}` },
+    { label: 'Poshmark', url: `https://poshmark.com/search?query=${enc}` },
+    { label: 'Depop', url: `https://www.depop.com/search/?q=${enc}` },
+    { label: 'Google Shopping', url: `https://www.google.com/search?tbm=shop&q=${enc}` },
+    { label: 'Facebook Marketplace', url: `https://www.facebook.com/marketplace/search/?query=${enc}` },
+  ];
+}
+
+function buildLocalPickup(raw) {
+  const q = createSearchQuery(raw);
+  const enc = encodeURIComponent(`${q} Twin Falls Idaho`);
+  return [
+    { place: 'Facebook Marketplace (Twin Falls)', url: `https://www.facebook.com/marketplace/twin-falls/search/?query=${enc}` },
+    { place: 'OfferUp (Twin Falls)', url: `https://offerup.com/search/?q=${enc}` },
+    { place: 'Google Maps: thrift stores Twin Falls', url: 'https://www.google.com/maps/search/thrift+stores+in+Twin+Falls+Idaho' },
+    { place: 'Google Maps: consignment Twin Falls', url: 'https://www.google.com/maps/search/consignment+stores+in+Twin+Falls+Idaho' },
+  ];
+}
+
 function normalizeOpp(raw) {
   const maxBuy = toCents(raw.max_buy_price ?? raw.max_buy_price_cents / 100, 1800);
   const minSuggested = Math.ceil(maxBuy * 1.6);
@@ -25,6 +54,8 @@ function normalizeOpp(raw) {
     suggested_price_cents: suggested,
     expected_margin_pct: margin,
     search_keywords: Array.isArray(raw.search_keywords) ? raw.search_keywords.map(String).map((s) => s.trim()).filter(Boolean).slice(0, 8) : [],
+    buy_links: buildBuyLinks(raw),
+    local_pickup: buildLocalPickup(raw),
     condition_checklist: Array.isArray(raw.condition_checklist || raw.checklist) ? (raw.condition_checklist || raw.checklist).map(String).map((s) => s.trim()).filter(Boolean).slice(0, 8) : [],
     notes: String(raw.notes || raw.source_notes || '').trim(),
   };
@@ -61,16 +92,23 @@ async function openAiGenerate(count) {
   return parsed.slice(0, count).map(normalizeOpp);
 }
 
+async function ensureAiOpportunityColumns() {
+  await query(`ALTER TABLE ai_opportunities ADD COLUMN IF NOT EXISTS buy_links JSONB NOT NULL DEFAULT '[]'::jsonb`);
+  await query(`ALTER TABLE ai_opportunities ADD COLUMN IF NOT EXISTS local_pickup JSONB NOT NULL DEFAULT '[]'::jsonb`);
+}
+
 async function insertOpp(opp) {
+  await ensureAiOpportunityColumns();
   await query(
-    `INSERT INTO ai_opportunities (opp_id,category,title,max_buy_price_cents,suggested_price_cents,expected_margin_pct,search_keywords,condition_checklist,notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9)
+    `INSERT INTO ai_opportunities (opp_id,category,title,max_buy_price_cents,suggested_price_cents,expected_margin_pct,search_keywords,buy_links,local_pickup,condition_checklist,notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11)
      ON CONFLICT (opp_id) DO NOTHING`,
-    [opp.opp_id, opp.category, opp.title, opp.max_buy_price_cents, opp.suggested_price_cents, opp.expected_margin_pct, JSON.stringify(opp.search_keywords || []), JSON.stringify(opp.condition_checklist || []), opp.notes || '']
+    [opp.opp_id, opp.category, opp.title, opp.max_buy_price_cents, opp.suggested_price_cents, opp.expected_margin_pct, JSON.stringify(opp.search_keywords || []), JSON.stringify(opp.buy_links || []), JSON.stringify(opp.local_pickup || []), JSON.stringify(opp.condition_checklist || []), opp.notes || '']
   );
 }
 
 async function ensureOpportunities(minCount = 3) {
+  await ensureAiOpportunityColumns();
   const existing = await query(`SELECT * FROM ai_opportunities ORDER BY created_at ASC`);
   if (existing.rows.length < minCount) {
     const generated = await openAiGenerate(Math.max(5, minCount - existing.rows.length));

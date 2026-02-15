@@ -35,6 +35,10 @@ async function applyInventoryForSession(sessionId, cart, transactionRunner = wit
       await client.query(
         `UPDATE products
          SET inventory = GREATEST(0, inventory - $2),
+             sold_out_since = CASE
+               WHEN GREATEST(0, inventory - $2) <= 0 THEN COALESCE(sold_out_since, now())
+               ELSE NULL
+             END,
              updated_at = now()
          WHERE id = $1`,
         [item.productId, item.qty]
