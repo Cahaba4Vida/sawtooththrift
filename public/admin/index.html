@@ -40,6 +40,11 @@
       .hidden { display:none !important; }
       .split { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
       .products-grid { display:grid; gap:10px; }
+      .photo-preview-grid { display:grid; gap:8px; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); }
+      .photo-preview-grid img { width:100%; aspect-ratio:1/1; object-fit:cover; border-radius:8px; border:1px solid rgba(255,255,255,.2); }
+      .product-summary { list-style:none; display:flex; justify-content:space-between; align-items:center; gap:10px; cursor:pointer; }
+      .product-summary::-webkit-details-marker { display:none; }
+      .product-headline { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
       .field { display:grid; gap:6px; }
       input, select, textarea { padding:8px 10px; width:100%; }
       textarea { min-height:84px; }
@@ -102,6 +107,14 @@
           <button class="btn" id="productsRefreshBtn" type="button">Refresh products</button>
           <button class="btn" id="newProductBtn" type="button">New Product</button>
         </div>
+        <div class="split" style="margin-bottom:8px;">
+          <div class="field"><label>Search products</label><input id="productsSearch" placeholder="Search by title, id, description" /></div>
+          <div class="row">
+            <label class="field" style="min-width:170px;"><span>Status</span><select id="productsStatusFilter"><option value="all">All</option><option value="active">Active</option><option value="draft">Draft</option><option value="archived">Archived</option></select></label>
+            <label><input id="productsInStockOnly" type="checkbox" /> In stock only</label>
+            <label><input id="productsShowArchived" type="checkbox" /> Show archived</label>
+          </div>
+        </div>
         <section class="card hidden" id="newProductForm" style="margin-bottom:12px;">
           <h3 style="margin-top:0">Create Product</h3>
           <div class="field"><label>Title *</label><input id="newTitle" /></div>
@@ -111,7 +124,7 @@
           </div>
           <div class="field"><label>Status</label><select id="newStatus"><option value="draft" selected>draft</option><option value="active">active</option></select></div>
           <div class="field"><label>Description</label><textarea id="newDescription"></textarea></div>
-          <div class="field"><label>Photos (one URL per line)</label><textarea id="newPhotos" placeholder="https://..."></textarea></div>
+          <div class="field"><label>Photos</label><input id="newPhotoInput" type="file" accept="image/*" capture="environment" multiple /><div class="muted">Tap to add photos. On supported phones this opens camera first.</div><div id="newPhotoPreviews" class="photo-preview-grid"></div></div>
           <div class="row">
             <button class="btn" id="createProductBtn" type="button">Create Product</button>
             <button class="btn ghost" id="cancelProductBtn" type="button">Cancel</button>
@@ -140,7 +153,7 @@
       (function(){
         const $ = (sel) => document.querySelector(sel);
         const $$ = (sel) => Array.from(document.querySelectorAll(sel));
-        const state = { activeTab: 'ai', products: [], drafts: [], dbTables: null };
+        const state = { activeTab: 'ai', products: [], drafts: [], dbTables: null, newPhotoFiles: [], newPhotoPreviewUrls: [] };
         const REQUIRED_TABLES = ['products', 'ai_opportunities', 'processed_stripe_sessions'];
 
         function esc(s){ return String(s||'').replace(/[&<>"']/g, (c)=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
@@ -179,6 +192,36 @@
           }
           if (!res.ok || data.ok === false) throw new Error(friendlyError(data.error || `Request failed (${res.status})`));
           return data;
+        }
+
+
+        async function uploadPhotoFile(file){
+          const uploadOnce = async (url)=>{
+            const form = new FormData();
+            form.append('file', file);
+            const res = await fetch(url, { method:'POST', credentials:'include', body: form });
+            const data = await res.json().catch(()=>({}));
+            return { res, data };
+          };
+
+          let { res, data } = await uploadOnce('/.netlify/functions/admin-upload-photo');
+          if (res.status === 404) {
+            ({ res, data } = await uploadOnce('/api/admin-upload-photo'));
+          }
+          if (!res.ok || data.ok === false || !data.url) throw new Error(friendlyError((data && data.error) || `Photo upload failed (${res.status})`));
+          return data.url;
+        }
+
+        function renderNewPhotoPreviews(){
+          const wrap = $('#newPhotoPreviews');
+          wrap.innerHTML = state.newPhotoPreviewUrls.map((url)=>`<img src="${esc(url)}" alt="Selected photo preview" />`).join('');
+        }
+
+        function setNewPhotoFiles(fileList){
+          state.newPhotoPreviewUrls.forEach((u)=>URL.revokeObjectURL(u));
+          state.newPhotoFiles = Array.from(fileList || []);
+          state.newPhotoPreviewUrls = state.newPhotoFiles.map((f)=>URL.createObjectURL(f));
+          renderNewPhotoPreviews();
         }
 
         function showDbSetup(tables){
@@ -223,6 +266,12 @@
           const el = $('#aiOpportunities');
           const list = Array.isArray(items) ? items : [];
           if (!list.length) { el.innerHTML = '<div class="muted">No opportunities available.</div>'; return; }
+
+          const renderLinkList = (entries, labelKey='label') => {
+            if (!Array.isArray(entries) || !entries.length) return '<div class="muted">None</div>';
+            return `<ul>${entries.map((item)=>`<li><a href="${esc(item.url || '#')}" target="_blank" rel="noopener">${esc(item[labelKey] || 'Link')}</a></li>`).join('')}</ul>`;
+          };
+
           el.innerHTML = list.map((o)=>`
             <article class="opp" data-id="${esc(o.opp_id)}">
               <h4>${esc(o.title)}</h4>
@@ -230,6 +279,8 @@
               <div class="muted">Buy max: ${money(o.max_buy_price)} · Suggested: ${money(o.suggested_price)}</div>
               <div class="muted">Keywords: ${esc((o.search_keywords||[]).join(', '))}</div>
               <pre class="muted">Checklist: ${(o.checklist||[]).map(esc).join('; ')}</pre>
+              <div class="muted"><strong>Where to buy</strong>${renderLinkList(o.buy_links || [], 'label')}</div>
+              <div class="muted"><strong>Local pickup</strong>${renderLinkList(o.local_pickup || [], 'place')}</div>
               <div class="row">
                 <button class="btn" data-action="accept" type="button">Accept</button>
                 <button class="btn ghost" data-action="decline" type="button">Decline</button>
@@ -247,6 +298,7 @@
                 const data = await api('/.netlify/functions/ai-accept', { method:'POST', body: JSON.stringify({ opp_id }) });
                 renderOpps(data.opportunities || []);
                 await loadDraftsOnly();
+                if (state.activeTab === 'products') await loadProducts();
                 setStatus('Accepted opportunity and created draft product.');
               } else {
                 const data = await api('/.netlify/functions/ai-decline', { method:'POST', body: JSON.stringify({ opp_id }) });
@@ -270,15 +322,35 @@
           if (!list.length) { el.innerHTML = '<div class="muted">No AI draft products yet.</div>'; return; }
           el.innerHTML = list.map((d)=>{
             const inv = Number.isInteger(Number(d.inventory)) ? Number(d.inventory) : 0;
+            const status = String(d.status || 'draft').toLowerCase();
+            const toggleLabel = status === 'active' ? 'Unpublish' : 'Publish';
+            const nextStatus = status === 'active' ? 'draft' : 'active';
             return `<article class="card" data-id="${esc(d.id)}">
               <h4>${esc(d.title)} ${inv<=0?'<span class="pill danger">Sold out</span>':''}</h4>
-              <div class="muted">Status: ${esc(d.status)} · Price: ${money(d.price)}</div>
+              <div class="muted">Status: <strong>${esc(status)}</strong> · Price: ${money(d.price)}</div>
               <div class="row">
                 <label>Inventory <input type="number" min="0" step="1" value="${inv}" data-field="inventory" /></label>
                 <button class="btn" data-save type="button">Save</button>
+                <button class="btn ghost" data-toggle-status="${esc(nextStatus)}" type="button">${toggleLabel}</button>
               </div>
             </article>`;
           }).join('');
+
+
+          el.querySelectorAll('button[data-archive-status]').forEach((btn)=>btn.addEventListener('click', async (e)=>{
+            e.preventDefault();
+            e.stopPropagation();
+            const card = btn.closest('[data-id]');
+            const id = card.getAttribute('data-id');
+            const nextStatus = btn.getAttribute('data-archive-status') || 'archived';
+            btn.disabled = true;
+            try {
+              await api('/.netlify/functions/admin-products', { method:'PATCH', body: JSON.stringify({ id, updates:{ status: nextStatus } }) });
+              await loadProducts();
+              setStatus(nextStatus === 'archived' ? 'Archived product.' : 'Restored product to draft.');
+            } catch (e4) { setStatus(e4.message||'Archive update failed', true); }
+            finally { btn.disabled = false; }
+          }));
 
           el.querySelectorAll('button[data-save]').forEach((btn)=>btn.addEventListener('click', async ()=>{
             const card = btn.closest('[data-id]');
@@ -289,8 +361,23 @@
             try {
               await api('/.netlify/functions/draft-products', { method:'PATCH', body: JSON.stringify({ id, updates:{ inventory: inv } }) });
               await loadDraftsOnly();
-              setStatus('Draft inventory updated.');
+              if (state.activeTab === 'products') await loadProducts();
+              setStatus('AI product inventory updated.');
             } catch (e) { setStatus(e.message||'Failed to update draft', true); }
+            finally { btn.disabled = false; }
+          }));
+
+          el.querySelectorAll('button[data-toggle-status]').forEach((btn)=>btn.addEventListener('click', async ()=>{
+            const card = btn.closest('[data-id]');
+            const id = card ? card.getAttribute('data-id') : '';
+            const nextStatus = btn.getAttribute('data-toggle-status') || 'draft';
+            btn.disabled = true;
+            try {
+              await api('/.netlify/functions/admin-products', { method:'PATCH', body: JSON.stringify({ id, updates:{ status: nextStatus } }) });
+              await loadDraftsOnly();
+              if (state.activeTab === 'products') await loadProducts();
+              setStatus(nextStatus === 'active' ? 'Published.' : 'Unpublished to draft.');
+            } catch (e) { setStatus(e.message||'Failed to update status', true); }
             finally { btn.disabled = false; }
           }));
         }
@@ -309,19 +396,51 @@
           $('#newInventory').value = '1';
           $('#newStatus').value = 'draft';
           $('#newDescription').value = '';
-          $('#newPhotos').value = '';
+          $('#newPhotoInput').value = '';
+          setNewPhotoFiles([]);
+        }
+
+        function filteredProducts(items){
+          const q = String($('#productsSearch').value || '').trim().toLowerCase();
+          const statusFilter = String($('#productsStatusFilter').value || 'all').toLowerCase();
+          const inStockOnly = $('#productsInStockOnly').checked;
+          const showArchived = $('#productsShowArchived').checked;
+          return (Array.isArray(items) ? items : []).filter((p)=>{
+            const hay = `${p.id || ''} ${p.title || ''} ${p.description || ''}`.toLowerCase();
+            if (q && !hay.includes(q)) return false;
+            if (!showArchived && String(p.status || '').toLowerCase() === 'archived') return false;
+            if (statusFilter !== 'all' && String(p.status || '').toLowerCase() !== statusFilter) return false;
+            if (inStockOnly && Number(p.inventory || 0) <= 0) return false;
+            return true;
+          });
         }
 
         function renderProducts(items){
           const el = $('#productsList');
-          if (!items.length){ el.innerHTML = '<div class="muted">No products found.</div>'; return; }
-          el.innerHTML = items.map((p)=>{
+          const list = filteredProducts(items);
+          if (!list.length){ el.innerHTML = '<div class="muted">No products found.</div>'; return; }
+          el.innerHTML = list.map((p)=>{
             const inv = Number.isInteger(Number(p.inventory)) ? Number(p.inventory) : 0;
-            return `<article class="card" data-id="${esc(p.id)}">
-              <div class="row" style="justify-content:space-between;">
-                <strong>${esc(p.id)}</strong>
-                ${inv<=0?'<span class="pill danger">Sold out</span>':''}
-              </div>
+            const status = String(p.status || 'draft').toLowerCase();
+            const quickStatus = status === 'active' ? 'draft' : 'active';
+            const quickLabel = status === 'active' ? 'Unpublish' : 'Publish';
+            const archiveLabel = status === 'archived' ? 'Restore' : 'Archive';
+            const archiveStatus = status === 'archived' ? 'draft' : 'archived';
+            const photosText = Array.isArray(p.photos) ? p.photos.join('\n') : '';
+            return `<details class="card" data-id="${esc(p.id)}">
+              <summary class="product-summary">
+                <div class="product-headline">
+                  <strong>${esc(p.title || p.id)}</strong>
+                  <span class="muted">(${esc(p.id)})</span>
+                  <span class="pill">${esc(status)}</span>
+                  ${inv<=0?'<span class="pill danger">Sold out</span>':''}
+                </div>
+                <div class="row">
+                  <span>${money(p.price)} · Inv ${inv}</span>
+                  <button class="btn ghost" data-quick-status="${esc(quickStatus)}" type="button">${quickLabel}</button>
+                  <button class="btn ghost" data-archive-status="${esc(archiveStatus)}" type="button">${archiveLabel}</button>
+                </div>
+              </summary>
               <div class="field"><label>Title</label><input data-field="title" value="${esc(p.title)}" /></div>
               <div class="split">
                 <div class="field"><label>Price</label><input data-field="price" type="number" step="0.01" min="0" value="${Number(p.price||0).toFixed(2)}" /></div>
@@ -329,15 +448,48 @@
               </div>
               <div class="field"><label>Status</label><select data-field="status"><option value="draft" ${p.status==='draft'?'selected':''}>draft</option><option value="active" ${p.status==='active'?'selected':''}>active</option><option value="archived" ${p.status==='archived'?'selected':''}>archived</option></select></div>
               <div class="field"><label>Description</label><textarea data-field="description">${esc(p.description||'')}</textarea></div>
+              <div class="field"><label>Photos (one URL per line)</label><textarea data-field="photos">${esc(photosText)}</textarea></div>
               <button class="btn" data-save type="button">Save</button>
-            </article>`;
+            </details>`;
           }).join('');
+
+          el.querySelectorAll('button[data-quick-status]').forEach((btn)=>btn.addEventListener('click', async (e)=>{
+            e.preventDefault();
+            e.stopPropagation();
+            const card = btn.closest('[data-id]');
+            const id = card.getAttribute('data-id');
+            const nextStatus = btn.getAttribute('data-quick-status') || 'draft';
+            btn.disabled = true;
+            try {
+              await api('/.netlify/functions/admin-products', { method:'PATCH', body: JSON.stringify({ id, updates:{ status: nextStatus } }) });
+              await loadProducts();
+              setStatus(nextStatus === 'active' ? 'Published.' : 'Unpublished to draft.');
+            } catch (e2) { setStatus(e2.message||'Status update failed', true); }
+            finally { btn.disabled = false; }
+          }));
+
+
+          el.querySelectorAll('button[data-archive-status]').forEach((btn)=>btn.addEventListener('click', async (e)=>{
+            e.preventDefault();
+            e.stopPropagation();
+            const card = btn.closest('[data-id]');
+            const id = card.getAttribute('data-id');
+            const nextStatus = btn.getAttribute('data-archive-status') || 'archived';
+            btn.disabled = true;
+            try {
+              await api('/.netlify/functions/admin-products', { method:'PATCH', body: JSON.stringify({ id, updates:{ status: nextStatus } }) });
+              await loadProducts();
+              setStatus(nextStatus === 'archived' ? 'Archived product.' : 'Restored product to draft.');
+            } catch (e4) { setStatus(e4.message||'Archive update failed', true); }
+            finally { btn.disabled = false; }
+          }));
 
           el.querySelectorAll('button[data-save]').forEach((btn)=>btn.addEventListener('click', async ()=>{
             const card = btn.closest('[data-id]');
             const id = card.getAttribute('data-id');
             const inventory = Number(card.querySelector('[data-field="inventory"]').value || 0);
             const price = Number(card.querySelector('[data-field="price"]').value || 0);
+            const photos = card.querySelector('[data-field="photos"]').value.split(/\n/).map((x)=>x.trim()).filter(Boolean);
             if (!Number.isInteger(inventory) || inventory < 0) { setStatus('Inventory must be integer >= 0.', true); return; }
             if (!Number.isFinite(price) || price < 0) { setStatus('Price must be >= 0.', true); return; }
             btn.disabled = true;
@@ -350,11 +502,12 @@
                   status: card.querySelector('[data-field="status"]').value || 'draft',
                   inventory,
                   price,
+                  photos,
                 }
               }) });
               await loadProducts();
               setStatus(`Saved ${id}.`);
-            } catch (e) { setStatus(e.message||'Save failed', true); }
+            } catch (e3) { setStatus(e3.message||'Save failed', true); }
             finally { btn.disabled = false; }
           }));
         }
@@ -468,6 +621,17 @@
           $('#newProductForm').classList.remove('hidden');
         });
 
+        $('#newPhotoInput').addEventListener('change', (e)=>{
+          setNewPhotoFiles(e.target.files);
+        });
+
+        ['input','change'].forEach((evt)=>{
+          $('#productsSearch').addEventListener(evt, ()=>renderProducts(state.products));
+          $('#productsStatusFilter').addEventListener(evt, ()=>renderProducts(state.products));
+          $('#productsInStockOnly').addEventListener(evt, ()=>renderProducts(state.products));
+          $('#productsShowArchived').addEventListener(evt, ()=>renderProducts(state.products));
+        });
+
         $('#cancelProductBtn').addEventListener('click', ()=>{
           $('#newProductForm').classList.add('hidden');
           resetNewProductForm();
@@ -480,7 +644,6 @@
           const inventory = Number($('#newInventory').value || 1);
           const status = $('#newStatus').value || 'draft';
           const description = $('#newDescription').value || '';
-          const photos = $('#newPhotos').value.split(/\n/).map((x)=>x.trim()).filter(Boolean);
 
           if (!title) { setStatus('Title is required.', true); return; }
           if (!Number.isFinite(price) || price < 0) { setStatus('Price must be >= 0.', true); return; }
@@ -488,6 +651,12 @@
 
           btn.disabled = true;
           try {
+            const photos = [];
+            for (const file of state.newPhotoFiles) {
+              const uploadedUrl = await uploadPhotoFile(file);
+              photos.push(uploadedUrl);
+            }
+
             await api('/.netlify/functions/admin-products', {
               method: 'POST',
               body: JSON.stringify({ title, price, inventory, status, description, photos })

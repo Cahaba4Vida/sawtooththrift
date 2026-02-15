@@ -6,6 +6,14 @@ const { requireAdmin, authErrorResponse } = require('./_adminAuth');
 const REQUIRED_TABLES = ['products', 'ai_opportunities', 'processed_stripe_sessions'];
 const schemaPath = path.resolve(__dirname, '../../db/schema.sql');
 
+
+async function applySchemaUpgrades() {
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS sold_out_since TIMESTAMPTZ`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ`);
+  await query(`ALTER TABLE ai_opportunities ADD COLUMN IF NOT EXISTS buy_links JSONB NOT NULL DEFAULT '[]'::jsonb`);
+  await query(`ALTER TABLE ai_opportunities ADD COLUMN IF NOT EXISTS local_pickup JSONB NOT NULL DEFAULT '[]'::jsonb`);
+}
+
 function json(statusCode, body) {
   return {
     statusCode,
@@ -59,6 +67,7 @@ exports.handler = async (event) => {
     }
 
     await query(sql);
+    await applySchemaUpgrades();
     const tables = await getSchemaStatus();
     const created = REQUIRED_TABLES.filter((name) => tables[name]);
 
