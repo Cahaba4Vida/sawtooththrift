@@ -122,13 +122,18 @@
     <script>
   (function loadDecapCms() {
     const sources = [
-      "https://unpkg.com/decap-cms@^3/dist/decap-cms.js",
-      "https://cdn.jsdelivr.net/npm/decap-cms@^3/dist/decap-cms.js"
+      "https://unpkg.com/decap-cms@3.8.3/dist/decap-cms.js",
+      "https://cdn.jsdelivr.net/npm/decap-cms@3.8.3/dist/decap-cms.js",
+      "https://unpkg.com/netlify-cms@2.10.192/dist/netlify-cms.js"
     ];
 
     function appendScript(i) {
       if (i >= sources.length) {
         console.error("Decap CMS failed to load from all CDNs.");
+        const msg = document.createElement("div");
+        msg.style.cssText = "position:fixed;inset:16px auto auto 16px;z-index:100000;background:#1f2937;color:#fff;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.2);font:600 13px/1.4 system-ui,sans-serif;max-width:min(560px,calc(100vw - 32px));";
+        msg.textContent = "Admin app failed to load from CDN sources. Hard refresh and disable blockers/VPN for this page, then retry.";
+        document.body.appendChild(msg);
         return;
       }
 
