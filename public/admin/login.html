@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin Login</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0f172a; color: #e2e8f0; }
+      .card { width: min(420px, calc(100vw - 2rem)); background: #111827; border: 1px solid rgba(255,255,255,.15); border-radius: 14px; padding: 1rem; }
+      h1 { margin: 0 0 .75rem; font-size: 1.1rem; }
+      p { margin: 0 0 1rem; color: #cbd5e1; font-size: .95rem; }
+      input, button { width: 100%; font: inherit; border-radius: 10px; box-sizing: border-box; }
+      input { border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.05); color: #fff; padding: .65rem .75rem; margin-bottom: .7rem; }
+      button { border: 0; padding: .65rem .75rem; font-weight: 700; cursor: pointer; }
+      #status { margin-top: .7rem; min-height: 1.2rem; color: #fca5a5; font-size: .9rem; }
+    </style>
+  </head>
+  <body>
+    <form class="card" id="loginForm">
+      <h1>Admin login</h1>
+      <p>Enter the shared admin token.</p>
+      <input id="token" type="password" autocomplete="current-password" placeholder="Admin token" required />
+      <button type="submit">Sign in</button>
+      <div id="status" role="status" aria-live="polite"></div>
+    </form>
+
+    <script>
+      (function () {
+        const form = document.getElementById('loginForm');
+        const tokenEl = document.getElementById('token');
+        const statusEl = document.getElementById('status');
+
+        form.addEventListener('submit', async function (e) {
+          e.preventDefault();
+          statusEl.textContent = 'Signing in...';
+          try {
+            const res = await fetch('/.netlify/functions/admin-login', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token: tokenEl.value || '' }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok) {
+              statusEl.textContent = (data && data.error) ? data.error : 'Login failed.';
+              return;
+            }
+            window.location.assign('/admin/');
+          } catch (err) {
+            statusEl.textContent = 'Unable to reach login endpoint.';
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

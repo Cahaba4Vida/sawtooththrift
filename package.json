@@ -8,5 +8,13 @@
     "pg": "^8.13.1",
     "stripe": "^16.9.0",
     "@netlify/blobs": "^8.1.0"
+  },
+  "scripts": {
+    "test": "node ./tests/run.js",
+    "test:smoke": "node ./tests/smoke.js"
+  },
+  "devDependencies": {
+    "undici": "^6.21.1",
+    "playwright": "^1.55.0"
   }
 }

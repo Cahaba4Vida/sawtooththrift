@@ -31,18 +31,6 @@
       }
     </style>
   
-    <script defer src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
-    <script>
-      // Optional hardening: require login before showing admin UI.
-      // This requires Netlify Identity enabled for the site.
-      document.addEventListener("DOMContentLoaded", () => {
-        if (!window.netlifyIdentity) return;
-        window.netlifyIdentity.on("init", user => {
-          if (!user) window.netlifyIdentity.open();
-        });
-      });
-    </script>
-
   </head>
   <body>
     <!-- Decap CMS -->
@@ -617,13 +605,10 @@
 
         async function fetchLatestOrderRecipient(item){
           if (!item || !item.payment_link_id) return null;
-          const jwt = await getJwt();
-          if (!jwt) return null;
-
           try {
             const q = new URLSearchParams({ payment_link_id: item.payment_link_id });
             const res = await fetch("/.netlify/functions/stripe-orders?" + q.toString(), {
-              headers: { "Authorization": "Bearer " + jwt }
+              credentials: "include"
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok || !data.ok || !data.order || !data.order.recipient) return null;
@@ -738,31 +723,14 @@
           }
         }
 
-        async function getJwt(){
-          if (!window.netlifyIdentity) return null;
-          const user = window.netlifyIdentity.currentUser();
-          if (!user) return null;
-          try{
-            return await user.jwt();
-          }catch(e){
-            return null;
-          }
-        }
-
         async function refresh(){
           setStatus("Loading from Stripe…");
           cache = [];
           render();
 
-          const jwt = await getJwt();
-          if (!jwt){
-            setStatus("Please log in to Netlify Identity first.");
-            return;
-          }
-
           try{
             const res = await fetch("/.netlify/functions/stripe-payment-links", {
-              headers: { "Authorization": "Bearer " + jwt }
+              credentials: "include"
             });
             const data = await res.json().catch(()=> ({}));
             if (!res.ok || !data.ok){
@@ -957,24 +925,13 @@
 
         function setStatus(msg){ statusEl.textContent = msg || ""; }
 
-        async function getJwt(){
-          if (!window.netlifyIdentity) return null;
-          const user = window.netlifyIdentity.currentUser();
-          if (!user) return null;
-          try { return await user.jwt(); } catch(e){ return null; }
-        }
 
 
         async function loadSystem(){
           if (!systemEl) return;
-          const jwt = await getJwt();
-          if (!jwt) {
-            systemEl.textContent = "Unauthorized. Please log in to admin.";
-            return;
-          }
           try {
             const res = await fetch("/.netlify/functions/health", {
-              headers: { "Authorization": "Bearer " + jwt }
+              credentials: "include"
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok || !data.ok) {
@@ -1037,14 +994,13 @@
         }
 
         async function markShipped(order){
-          const jwt = await getJwt();
-          if (!jwt){ setStatus("Please log in to admin first."); return; }
           const tracking = trackingById[order.id] != null ? trackingById[order.id] : (order.tracking || "");
           setStatus("Marking shipped…");
           try {
             const res = await fetch("/.netlify/functions/stripe-mark-shipped", {
               method: "POST",
-              headers: { "Content-Type": "application/json", "Authorization": "Bearer " + jwt },
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ sessionId: order.id, tracking }),
             });
             const data = await res.json().catch(() => ({}));
@@ -1134,14 +1090,12 @@
 
         async function refresh(){
           setStatus("Loading paid orders…");
-          const jwt = await getJwt();
-          if (!jwt){ setStatus("Please log in to admin first."); return; }
           try {
             const status = String(statusFilterEl && statusFilterEl.value ? statusFilterEl.value : "unshipped");
             const q = String(searchEl && searchEl.value ? searchEl.value : "").trim();
             const params = new URLSearchParams({ limit: "50", status, q });
             const res = await fetch("/.netlify/functions/stripe-orders?" + params.toString(), {
-              headers: { "Authorization": "Bearer " + jwt }
+              credentials: "include"
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok || !data.ok){
@@ -1249,13 +1203,6 @@
         const out = document.getElementById("stAiOutput");
         const loading = document.getElementById("stAiLoading");
 
-        async function getJwt(){
-          if (!window.netlifyIdentity) return null;
-          const user = window.netlifyIdentity.currentUser();
-          if (!user) return null;
-          try { return await user.jwt(); } catch (e) { return null; }
-        }
-
         function setLoading(on){
           loading.classList.toggle("show", !!on);
           askBtn.disabled = !!on;
@@ -1265,20 +1212,14 @@
           const question = (qEl.value || "").trim();
           if (!question) return;
 
-          const jwt = await getJwt();
-          if (!jwt){
-            out.textContent = "Please log in to admin first.";
-            return;
-          }
-
           setLoading(true);
           out.textContent = "";
           try{
             const res = await fetch("/.netlify/functions/ai-insights", {
               method: "POST",
+              credentials: "include",
               headers: {
                 "Content-Type": "application/json",
-                "Authorization": "Bearer " + jwt,
               },
               body: JSON.stringify({ question }),
             });
@@ -1380,21 +1321,12 @@
 
         function setStatus(msg){ statusEl.textContent = msg || ''; }
 
-        async function getJwt(){
-          if (!window.netlifyIdentity) return null;
-          const user = window.netlifyIdentity.currentUser();
-          if (!user) return null;
-          try { return await user.jwt(); } catch (e) { return null; }
-        }
-
         async function api(url, options){
-          const jwt = await getJwt();
-          if (!jwt) throw new Error('Please log in with Netlify Identity first.');
           const res = await fetch(url, {
             ...(options || {}),
+            credentials: 'include',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': 'Bearer ' + jwt,
               ...((options && options.headers) || {}),
             },
           });
@@ -1549,8 +1481,7 @@
   const closeBtn=document.getElementById('stDbProductsClose');
 
   function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
-  async function getJwt(){ if(!window.netlifyIdentity) return null; const u=window.netlifyIdentity.currentUser(); if(!u) return null; try{return await u.jwt();}catch(e){return null;} }
-  async function api(url, opts){ const jwt=await getJwt(); if(!jwt) throw new Error('Login required'); const r=await fetch(url,{...(opts||{}),headers:{'Content-Type':'application/json','Authorization':'Bearer '+jwt,...((opts&&opts.headers)||{})}}); const d=await r.json().catch(()=>({})); if(!r.ok||d.ok===false) throw new Error(d.error||('Request failed '+r.status)); return d; }
+  async function api(url, opts){ const r=await fetch(url,{...(opts||{}),credentials:'include',headers:{'Content-Type':'application/json',...((opts&&opts.headers)||{})}}); const d=await r.json().catch(()=>({})); if(!r.ok||d.ok===false) throw new Error(d.error||('Request failed '+r.status)); return d; }
   function setStatus(m){status.textContent=m||'';}
 
   function renderProducts(products){

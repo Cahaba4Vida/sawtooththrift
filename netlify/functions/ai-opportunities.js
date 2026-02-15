@@ -1,13 +1,17 @@
 const { ensureOpportunities } = require('./_ai-db');
+const { requireAdmin, authErrorResponse } = require('./_adminAuth');
 
 function json(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }, body: JSON.stringify(body) };
 }
 
-exports.handler = async (_event, context) => {
+exports.handler = async (event, _context) => {
   try {
-    const user = context && context.clientContext && context.clientContext.user;
-    if (!user) return json(401, { ok: false, error: 'Unauthorized' });
+    try {
+      requireAdmin(event);
+    } catch (err) {
+      return authErrorResponse(err);
+    }
 
     const opportunities = await ensureOpportunities(3);
     return json(200, { ok: true, opportunities: opportunities.map(formatOpp) });

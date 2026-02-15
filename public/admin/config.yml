@@ -5,9 +5,6 @@ backend:
 media_folder: "assets/uploads"
 public_folder: "/assets/uploads"
 
-media_library:
-  name: default
-
 collections:
   - name: "dummy"
     label: "Dummy"
