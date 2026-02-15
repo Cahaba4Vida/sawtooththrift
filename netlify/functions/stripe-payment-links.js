@@ -1,11 +1,10 @@
+const { requireAdmin, authErrorResponse } = require('./_adminAuth');
 /**
  * Netlify Function: stripe-payment-links
- * Admin-only (Netlify Identity): returns Stripe Payment Links with product/price info
+ * Admin-only: returns Stripe Payment Links with product/price info
  *
  * Required env:
  *   STRIPE_SECRET_KEY
- * Optional env:
- *   ADMIN_EMAILS (comma-separated allowlist)
  */
 function json(statusCode, body, extraHeaders = {}) {
   return {
@@ -13,15 +12,6 @@ function json(statusCode, body, extraHeaders = {}) {
     headers: { "Content-Type": "application/json; charset=utf-8", ...extraHeaders },
     body: JSON.stringify(body),
   };
-}
-
-function normalizeEmailList(v) {
-  if (!v) return null;
-  const arr = String(v)
-    .split(",")
-    .map(s => s.trim().toLowerCase())
-    .filter(Boolean);
-  return arr.length ? arr : null;
 }
 
 async function stripeGet(path, secretKey) {
@@ -63,19 +53,15 @@ async function listAll(secretKey, resourcePath, params) {
   return out;
 }
 
-exports.handler = async (event, context) => {
+exports.handler = async (event, _context) => {
   try {
     const secretKey = process.env.STRIPE_SECRET_KEY;
     if (!secretKey) return json(500, { ok: false, error: "Missing STRIPE_SECRET_KEY env var." });
 
-    // Auth: require Netlify Identity user context
-    const user = context && context.clientContext && context.clientContext.user;
-    if (!user) return json(401, { ok: false, error: "Unauthorized (login required)." });
-
-    const allow = normalizeEmailList(process.env.ADMIN_EMAILS);
-    const email = (user.email || "").toLowerCase();
-    if (allow && !allow.includes(email)) {
-      return json(403, { ok: false, error: "Forbidden (not in ADMIN_EMAILS)." });
+    try {
+      requireAdmin(event);
+    } catch (err) {
+      return authErrorResponse(err);
     }
 
     // 1) Pull products (for name lookup)

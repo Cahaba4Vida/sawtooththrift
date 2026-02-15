@@ -19,11 +19,31 @@ function parseCart(session) {
     const parsed = JSON.parse(raw || '[]');
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .map((x) => ({ productId: String(x && x.productId || '').trim(), qty: Number(x && x.qty) }))
+      .map((x) => ({ productId: String((x && x.productId) || '').trim(), qty: Number(x && x.qty) }))
       .filter((x) => x.productId && Number.isInteger(x.qty) && x.qty > 0);
   } catch (_) {
     return [];
   }
+}
+
+async function applyInventoryForSession(sessionId, cart, transactionRunner = withTransaction) {
+  await transactionRunner(async (client) => {
+    const exists = await client.query('SELECT 1 FROM processed_stripe_sessions WHERE session_id=$1', [sessionId]);
+    if (exists.rows.length) return { applied: false };
+
+    for (const item of cart) {
+      await client.query(
+        `UPDATE products
+         SET inventory = GREATEST(0, inventory - $2),
+             updated_at = now()
+         WHERE id = $1`,
+        [item.productId, item.qty]
+      );
+    }
+
+    await client.query('INSERT INTO processed_stripe_sessions (session_id) VALUES ($1)', [sessionId]);
+    return { applied: true };
+  });
 }
 
 exports.handler = async (event) => {
@@ -49,25 +69,14 @@ exports.handler = async (event) => {
     const sessionId = String(session.id || '').trim();
     if (!sessionId) return json(200, { ok: true, ignored: true });
 
-    await withTransaction(async (client) => {
-      const exists = await client.query(`SELECT 1 FROM processed_stripe_sessions WHERE session_id=$1`, [sessionId]);
-      if (exists.rows.length) return;
-
-      for (const item of cart) {
-        await client.query(
-          `UPDATE products
-           SET inventory = GREATEST(0, inventory - $2),
-               updated_at = now()
-           WHERE id = $1`,
-          [item.productId, item.qty]
-        );
-      }
-
-      await client.query(`INSERT INTO processed_stripe_sessions (session_id) VALUES ($1)`, [sessionId]);
-    });
-
+    await applyInventoryForSession(sessionId, cart);
     return json(200, { ok: true });
   } catch (err) {
     return json(400, { ok: false, error: err.message || 'Webhook error' });
   }
+};
+
+exports.__testOnly = {
+  parseCart,
+  applyInventoryForSession,
 };

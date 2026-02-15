@@ -1,4 +1,5 @@
 const Stripe = require("stripe");
+const { requireAdmin, authErrorResponse } = require('./_adminAuth');
 
 function json(statusCode, body) {
   return {
@@ -8,10 +9,13 @@ function json(statusCode, body) {
   };
 }
 
-exports.handler = async (event, context) => {
+exports.handler = async (event, _context) => {
   try {
-    const user = context && context.clientContext && context.clientContext.user;
-    if (!user) return json(401, { ok: false, error: "Unauthorized" });
+    try {
+      requireAdmin(event);
+    } catch (err) {
+      return authErrorResponse(err);
+    }
 
     if (event.httpMethod !== "POST") {
       return json(405, { ok: false, error: "Method Not Allowed" });

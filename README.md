@@ -8,6 +8,42 @@ This is a Netlify-ready static site + Decap CMS admin panel.
 - Admin panel at `/admin` (Decap CMS) for editing products + uploading images
 - Contact form section (FormSubmit placeholder)
 
+
+## Running tests
+
+Test tooling is Node-based and runs against either a deployed Netlify preview URL or local Netlify dev.
+
+1) Install dependencies:
+
+```bash
+npm install
+```
+
+2) Set required environment variables:
+
+- `BASE_URL` (example: `https://your-preview-url.netlify.app`)
+- `ADMIN_TOKEN`
+- `DATABASE_URL` (required when running local functions against a local DB)
+
+Additional vars used by specific tests:
+
+- `STRIPE_SECRET_KEY` (Stripe test mode key, needed for checkout session tests)
+- `STRIPE_TEST_WEBHOOK_SECRET` (optional for local webhook wiring)
+
+3) Run smoke tests only:
+
+```bash
+npm run test:smoke
+```
+
+4) Run full suite (smoke + browser checks):
+
+```bash
+npm test
+```
+
+A sample config is included at `tests/config.example.json`. Tests read from environment variables first and never print secret values.
+
 ## Local preview
 From the project root, run one of the following:
 - Python: `python -m http.server 8080` then open `http://localhost:8080/public/`
@@ -80,7 +116,7 @@ To enforce true inventory (prevent oversells), you would add a server-side check
 - Set `OPENAI_API_KEY` in Netlify environment variables.
 - Optional: `OPENAI_MODEL` (defaults to `gpt-4.1-mini`).
 - For Stripe revenue context in AI responses, also set `STRIPE_SECRET_KEY`.
-- Access is limited to logged-in Netlify Identity users (and `ADMIN_EMAILS` allowlist when configured).
+- Access is limited to requests authenticated by the server-side `ADMIN_TOKEN` cookie/Bearer validation.
 
 
 ## AI Sourcing (Admin)
@@ -92,8 +128,7 @@ To enforce true inventory (prevent oversells), you would add a server-side check
 
 ### Required environment/config
 - `OPENAI_API_KEY`
-- Netlify Identity enabled for admin (all AI sourcing endpoints require authenticated admin users)
-
+- `ADMIN_TOKEN` (all admin/AI endpoints require authenticated admin token)
 - `STRIPE_SECRET_KEY` (used by checkout creation and webhook inventory decrement)
 - `STRIPE_WEBHOOK_SECRET` (used by `/.netlify/functions/stripe-webhook` signature verification)
 

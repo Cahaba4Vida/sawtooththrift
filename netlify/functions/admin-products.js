@@ -1,13 +1,10 @@
 const { query } = require('./_db');
+const { requireAdmin, authErrorResponse } = require('./_adminAuth');
 
 function json(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(body) };
 }
 
-function requireAuth(context) {
-  const user = context && context.clientContext && context.clientContext.user;
-  return !!user;
-}
 
 function parseBody(event) {
   if (!event || !event.body) return {};
@@ -24,9 +21,13 @@ function toProduct(row) {
   };
 }
 
-exports.handler = async (event, context) => {
+exports.handler = async (event, _context) => {
   try {
-    if (!requireAuth(context)) return json(401, { ok: false, error: 'Unauthorized' });
+    try {
+      requireAdmin(event);
+    } catch (err) {
+      return authErrorResponse(err);
+    }
 
     if (event.httpMethod === 'GET') {
       const { rows } = await query(`SELECT * FROM products ORDER BY created_at DESC`);

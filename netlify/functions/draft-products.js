@@ -1,12 +1,10 @@
 const { query } = require('./_db');
+const { requireAdmin, authErrorResponse } = require('./_adminAuth');
 
 function json(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(body) };
 }
 
-function auth(context) {
-  return !!(context && context.clientContext && context.clientContext.user);
-}
 
 function formatDraft(row) {
   return {
@@ -18,9 +16,13 @@ function formatDraft(row) {
   };
 }
 
-exports.handler = async (event, context) => {
+exports.handler = async (event, _context) => {
   try {
-    if (!auth(context)) return json(401, { ok: false, error: 'Unauthorized' });
+    try {
+      requireAdmin(event);
+    } catch (err) {
+      return authErrorResponse(err);
+    }
 
     if (event.httpMethod === 'GET') {
       const { rows } = await query(`SELECT * FROM products WHERE status='draft' ORDER BY created_at DESC`);

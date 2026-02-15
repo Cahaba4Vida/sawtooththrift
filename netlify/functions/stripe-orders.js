@@ -1,4 +1,5 @@
 const Stripe = require("stripe");
+const { requireAdmin, authErrorResponse } = require('./_adminAuth');
 
 function json(statusCode, body) {
   return {
@@ -36,10 +37,13 @@ function normalizeItems(lineItems) {
   });
 }
 
-exports.handler = async (event, context) => {
+exports.handler = async (event, _context) => {
   try {
-    const user = context && context.clientContext && context.clientContext.user;
-    if (!user) return json(401, { ok: false, error: "Unauthorized" });
+    try {
+      requireAdmin(event);
+    } catch (err) {
+      return authErrorResponse(err);
+    }
 
     const secretKey = process.env.STRIPE_SECRET_KEY;
     if (!secretKey) return json(500, { ok: false, error: "Missing STRIPE_SECRET_KEY env var." });

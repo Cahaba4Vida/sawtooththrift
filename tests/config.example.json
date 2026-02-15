@@ -1,0 +1,5 @@
+{
+  "BASE_URL": "https://your-netlify-preview-url.netlify.app",
+  "ADMIN_TOKEN": "set-in-netlify-env",
+  "STRIPE_WEBHOOK_SECRET": "whsec_test_placeholder"
+}

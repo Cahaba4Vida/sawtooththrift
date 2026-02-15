@@ -1,14 +1,18 @@
 const { query } = require('./_db');
+const { requireAdmin, authErrorResponse } = require('./_adminAuth');
 const { ensureOpportunities } = require('./_ai-db');
 
 function json(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(body) };
 }
 
-exports.handler = async (event, context) => {
+exports.handler = async (event, _context) => {
   try {
-    const user = context && context.clientContext && context.clientContext.user;
-    if (!user) return json(401, { ok: false, error: 'Unauthorized' });
+    try {
+      requireAdmin(event);
+    } catch (err) {
+      return authErrorResponse(err);
+    }
     if (event.httpMethod !== 'POST') return json(405, { ok: false, error: 'Method Not Allowed' });
 
     const body = event.body ? JSON.parse(event.body) : {};

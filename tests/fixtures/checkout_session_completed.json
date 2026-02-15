@@ -1,0 +1,13 @@
+{
+  "id": "evt_test_checkout_session_completed",
+  "type": "checkout.session.completed",
+  "data": {
+    "object": {
+      "id": "cs_test_idempotent_session_001",
+      "payment_status": "paid",
+      "metadata": {
+        "cart": "[{\"productId\":\"test-product-1\",\"qty\":1}]"
+      }
+    }
+  }
+}
