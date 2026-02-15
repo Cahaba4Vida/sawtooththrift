@@ -185,6 +185,8 @@
           document.body.appendChild(fab);
         });
       })();
+    </script>
+
     <script>
   (function () {
     const badge = document.createElement("div");
@@ -243,8 +245,6 @@
       rewriteUnsavedLabel();
     });
   })();
-</script>
-
 </script>
 
       <!-- Stripe Tools (Payment Links + Prices) -->
@@ -498,6 +498,68 @@
           }
         }
 
+
+        function buildShippingLabel(item, recipient) {
+          const fromName = "Sawtooth Thrift";
+          const fromLine1 = "Twin Falls, ID";
+          const toBlock = [
+            recipient.name,
+            recipient.line1,
+            recipient.line2,
+            `${recipient.city}, ${recipient.state} ${recipient.zip}`,
+            recipient.country || "US",
+          ].filter(Boolean).join("\n");
+
+          const itemLine = `${item.product_name || item.product_id || "Item"} (${money(item.unit_amount, item.currency)})`;
+          const orderRef = item.payment_link_id || item.price_id || "n/a";
+
+          return [
+            "FROM:",
+            fromName,
+            fromLine1,
+            "",
+            "TO:",
+            toBlock,
+            "",
+            "ITEM:",
+            itemLine,
+            `Ref: ${orderRef}`,
+            "",
+            "Carrier: USPS / UPS",
+            "Service: Ground",
+            "Tracking #: ____________________",
+          ].join("\n");
+        }
+
+        async function openShippingLabel(item){
+          const recipient = {
+            name: prompt("Recipient full name:"),
+            line1: prompt("Address line 1:"),
+            line2: prompt("Address line 2 (optional):") || "",
+            city: prompt("City:"),
+            state: prompt("State (e.g. ID):"),
+            zip: prompt("ZIP code:"),
+            country: prompt("Country code", "US") || "US",
+          };
+
+          if (!recipient.name || !recipient.line1 || !recipient.city || !recipient.state || !recipient.zip) {
+            setStatus("Shipping label canceled (missing required address fields).");
+            return;
+          }
+
+          const label = buildShippingLabel(item, recipient);
+          copyToClipboard(label);
+
+          const w = window.open("", "_blank", "noopener,noreferrer,width=420,height=620");
+          if (w && w.document) {
+            w.document.write(`<pre style="font:14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding:16px; white-space:pre-wrap;">${escapeHtml(label)}</pre>`);
+            w.document.close();
+          }
+
+          setStatus("Shipping label generated and copied.");
+          setTimeout(()=>setStatus(""), 1800);
+        }
+
         function rowTemplate(item){
           const title = item.product_name || item.product_id || "Stripe item";
           const priceStr = money(item.unit_amount, item.currency);
@@ -521,6 +583,7 @@
               <button type="button" data-action="copy-price">Copy Price</button>
               <button type="button" data-action="copy-link">Copy Link</button>
               <button type="button" data-action="apply">Apply</button>
+              <button type="button" data-action="label">Shipping Label</button>
             </div>
           `;
 
@@ -530,6 +593,7 @@
           });
           div.querySelector('[data-action="copy-link"]').addEventListener("click", () => copyToClipboard(url));
           div.querySelector('[data-action="apply"]').addEventListener("click", () => applyToEditor(item));
+          div.querySelector('[data-action="label"]').addEventListener("click", () => openShippingLabel(item));
 
           return div;
         }
@@ -620,6 +684,195 @@
         });
       })();
     </script>
+
+    <style>
+      .st-admin-quickbar{
+        position: fixed;
+        right: 16px;
+        bottom: 82px;
+        z-index: 99998;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .st-admin-quickbar a, .st-admin-quickbar button{
+        border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(11,15,20,0.92);
+        color: #fff;
+        border-radius: 10px;
+        padding: 9px 12px;
+        font: 600 13px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        text-decoration: none;
+      }
+      @media (max-width: 640px){
+        .st-admin-quickbar{ right: 12px; bottom: 74px; }
+        .st-admin-quickbar a, .st-admin-quickbar button{ padding: 12px 14px; font-size: 14px; }
+      }
+    </style>
+    <script>
+      (function(){
+        const bar = document.createElement("div");
+        bar.className = "st-admin-quickbar";
+
+        const live = document.createElement("a");
+        live.href = "/";
+        live.target = "_blank";
+        live.rel = "noopener";
+        live.textContent = "Open storefront";
+
+        const add = document.createElement("button");
+        add.type = "button";
+        add.textContent = "New product";
+        add.addEventListener("click", () => {
+          const buttons = Array.from(document.querySelectorAll("button, [role='button']"));
+          const create = buttons.find((b) => /new|create/i.test((b.textContent || "").trim()));
+          if (create) create.click();
+        });
+
+        const search = document.createElement("button");
+        search.type = "button";
+        search.textContent = "Focus search";
+        search.addEventListener("click", () => {
+          const input = document.querySelector("input[type='search'], input[placeholder*='Search'], input[aria-label*='Search']");
+          if (input) input.focus();
+        });
+
+        bar.append(live, add, search);
+        document.addEventListener("DOMContentLoaded", () => document.body.appendChild(bar));
+      })();
+    </script>
+
+
+
+    <style>
+      .st-ai-launcher{
+        position: fixed;
+        left: 16px;
+        bottom: 64px;
+        z-index: 99998;
+        padding: 12px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(28,18,52,0.95);
+        color: #fff;
+        font: 700 14px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+        cursor: pointer;
+      }
+      .st-ai-panel{
+        position: fixed;
+        left: 16px;
+        top: 16px;
+        width: min(560px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
+        z-index: 100000;
+        display: none;
+        border: 1px solid rgba(255,255,255,0.14);
+        border-radius: 14px;
+        background: rgba(11,15,20,0.98);
+        color: #fff;
+        overflow: hidden;
+      }
+      .st-ai-panel.open{ display: block; }
+      .st-ai-head{ display:flex; justify-content:space-between; align-items:center; gap:8px; padding:12px; border-bottom:1px solid rgba(255,255,255,0.12); }
+      .st-ai-body{ display:grid; gap:10px; padding:12px; }
+      .st-ai-q{ width:100%; min-height:84px; border-radius:10px; border:1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.06); color:#fff; padding:10px; }
+      .st-ai-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+      .st-ai-actions button{ border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.08); color:#fff; border-radius:10px; padding:8px 10px; cursor:pointer; }
+      .st-ai-out{ white-space:pre-wrap; font: 500 13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:10px; min-height:110px; max-height:50vh; overflow:auto; }
+      .st-ai-loading{ display:none; align-items:center; gap:8px; font-size:12px; opacity:0.85; }
+      .st-ai-loading.show{ display:flex; }
+      .st-ai-dots i{ display:inline-block; width:6px; height:6px; border-radius:50%; background:#fff; margin-right:4px; opacity:.4; animation: stDot 1s infinite; }
+      .st-ai-dots i:nth-child(2){ animation-delay:.2s; }
+      .st-ai-dots i:nth-child(3){ animation-delay:.4s; }
+      @keyframes stDot { 0%,80%,100%{opacity:.25; transform: translateY(0);} 40%{opacity:1; transform: translateY(-2px);} }
+    </style>
+
+    <button class="st-ai-launcher" id="stAiLauncher" type="button">AI Insights</button>
+    <div class="st-ai-panel" id="stAiPanel" role="dialog" aria-label="AI Insights">
+      <div class="st-ai-head">
+        <div><b>AI Insights</b><br/><small style="opacity:.75;">Twin Falls sourcing + Stripe revenue tips</small></div>
+        <button type="button" id="stAiClose" style="border:1px solid rgba(255,255,255,0.18); background:rgba(255,255,255,0.08); color:#fff; border-radius:10px; padding:6px 10px;">Close</button>
+      </div>
+      <div class="st-ai-body">
+        <textarea id="stAiQuestion" class="st-ai-q" placeholder="Ask: What should I buy this week in Twin Falls for quick resale?">What should I buy this week in Twin Falls for quick resale and how should I price it?</textarea>
+        <div class="st-ai-actions">
+          <button type="button" id="stAiAsk">Ask AI</button>
+          <button type="button" id="stAiCopy">Copy</button>
+        </div>
+        <div class="st-ai-loading" id="stAiLoading"><span class="st-ai-dots"><i></i><i></i><i></i></span> Thinking…</div>
+        <div class="st-ai-out" id="stAiOutput">Ask a question to get simple buying + revenue insights.</div>
+      </div>
+    </div>
+
+    <script>
+      (function(){
+        const launcher = document.getElementById("stAiLauncher");
+        const panel = document.getElementById("stAiPanel");
+        const close = document.getElementById("stAiClose");
+        const askBtn = document.getElementById("stAiAsk");
+        const copyBtn = document.getElementById("stAiCopy");
+        const qEl = document.getElementById("stAiQuestion");
+        const out = document.getElementById("stAiOutput");
+        const loading = document.getElementById("stAiLoading");
+
+        async function getJwt(){
+          if (!window.netlifyIdentity) return null;
+          const user = window.netlifyIdentity.currentUser();
+          if (!user) return null;
+          try { return await user.jwt(); } catch (e) { return null; }
+        }
+
+        function setLoading(on){
+          loading.classList.toggle("show", !!on);
+          askBtn.disabled = !!on;
+        }
+
+        async function askAI(){
+          const question = (qEl.value || "").trim();
+          if (!question) return;
+
+          const jwt = await getJwt();
+          if (!jwt){
+            out.textContent = "Please log in to admin first.";
+            return;
+          }
+
+          setLoading(true);
+          out.textContent = "";
+          try{
+            const res = await fetch("/.netlify/functions/ai-insights", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + jwt,
+              },
+              body: JSON.stringify({ question }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok){
+              out.textContent = (data && data.error) ? data.error : ("Request failed (" + res.status + ")");
+              return;
+            }
+            out.textContent = data.answer || "No answer returned.";
+          } catch (e) {
+            out.textContent = "Could not load AI insights right now.";
+          } finally {
+            setLoading(false);
+          }
+        }
+
+        launcher.addEventListener("click", () => panel.classList.add("open"));
+        close.addEventListener("click", () => panel.classList.remove("open"));
+        askBtn.addEventListener("click", askAI);
+        copyBtn.addEventListener("click", async () => {
+          const text = out.textContent || "";
+          if (!text.trim()) return;
+          try { await navigator.clipboard.writeText(text); } catch (e) {}
+        });
+      })();
+    </script>
+
 </body>
 </html>
  

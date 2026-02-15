@@ -4,6 +4,8 @@
   const statCount = document.getElementById("statCount");
   const searchInput = document.getElementById("searchInput");
   const categorySelect = document.getElementById("categorySelect");
+  const sortSelect = document.getElementById("sortSelect");
+  const quickFilters = Array.from(document.querySelectorAll(".chip[data-filter]"));
   const recentlySoldWrap = document.getElementById("recentlySoldWrap");
   const recentlySoldGrid = document.getElementById("recentlySoldGrid");
 
@@ -62,6 +64,30 @@
     const primary = p.image;
     const hover = Array.isArray(p.gallery) && p.gallery.length ? p.gallery[0] : null;
     return { primary, hover };
+  }
+
+
+  function isSoldOutProduct(p) {
+    const qty = (p.quantity === 0 || Number.isFinite(Number(p.quantity))) ? Number(p.quantity) : null;
+    const status = String(p.status || "").toLowerCase();
+    return status === "sold" || status === "inactive" || (qty !== null && qty <= 0);
+  }
+
+  function filterByQuick(products, mode) {
+    const m = String(mode || "all").toLowerCase();
+    if (m === "in-stock") return products.filter(p => !isSoldOutProduct(p));
+    if (m === "ready-ship") return products.filter(p => !Boolean(p.pickup_only));
+    if (m === "under-50") return products.filter(p => Number(p.price) < 50);
+    return products;
+  }
+
+  function sortProducts(products, mode) {
+    const list = products.slice();
+    const m = String(mode || "featured").toLowerCase();
+    if (m === "price-asc") return list.sort((a, b) => Number(a.price || 0) - Number(b.price || 0));
+    if (m === "price-desc") return list.sort((a, b) => Number(b.price || 0) - Number(a.price || 0));
+    if (m === "name-asc") return list.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+    return list;
   }
 
   function renderCard(p, currency) {
@@ -128,6 +154,7 @@
 
           <div class="product-footlinks">
             <a class="muted small link" href="#contact" data-inquire="${escapeHtmlAttr(safeName)}">Ask about this item</a>
+            <a class="muted small link" href="sms:+12082808976?&body=${encodeURIComponent(`Hi! I'm interested in ${safeName}. Is it still available?`)}">Text us</a>
           </div>
         </div>
       </article>
@@ -157,7 +184,6 @@
   }
 
   function applyHoverSwap() {
-    // Desktop hover swap; on touch devices this will simply not trigger.
     grid.querySelectorAll("img[data-hover]").forEach(img => {
       const primary = img.getAttribute("data-primary");
       const hover = img.getAttribute("data-hover");
@@ -166,6 +192,10 @@
 
       parent.addEventListener("mouseenter", () => { img.src = hover; });
       parent.addEventListener("mouseleave", () => { img.src = primary; });
+
+      // Touch devices: press to preview second image.
+      parent.addEventListener("touchstart", () => { img.src = hover; }, { passive: true });
+      parent.addEventListener("touchend", () => { img.src = primary; }, { passive: true });
     });
   }
 
@@ -187,10 +217,10 @@
     if (emptyState) emptyState.classList.toggle("hidden", !show);
   }
 
-  function filterProducts(products, q, cat) {
+  function filterProducts(products, q, cat, quickMode) {
     const query = (q || "").toLowerCase().trim();
     const category = (cat || "").toLowerCase().trim();
-    return products.filter(p => {
+    const base = products.filter(p => {
       const status = String(p.status || "active").toLowerCase();
       if (status !== "active") return false;
 
@@ -208,13 +238,31 @@
       const okCat = !category || normalizeTags(p.tags).some(t => String(t).toLowerCase() === category);
       return okQuery && okCat;
     });
+    return filterByQuick(base, quickMode);
+  }
+
+  async function loadCatalog() {
+    const endpoints = ["/.netlify/functions/products", "/data/products.json"];
+    let lastError = null;
+
+    for (const endpoint of endpoints) {
+      try {
+        const res = await fetch(endpoint, { cache: "no-store" });
+        if (!res.ok) throw new Error(`Failed to load products from ${endpoint}`);
+        const data = await res.json();
+        if (data && data.ok === false) throw new Error(data.error || "Catalog API error");
+        return data;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    throw lastError || new Error("Failed to load catalog");
   }
 
   async function init() {
     try {
-      const res = await fetch("/data/products.json", { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to load products");
-      const data = await res.json();
+      const data = await loadCatalog();
       const currency = data.currency || "USD";
       const products = Array.isArray(data.products) ? data.products : [];
 
@@ -226,10 +274,18 @@
         categorySelect.innerHTML = `<option value="">All categories</option>` + tags.map(t => `<option value="${escapeHtmlAttr(t)}">${escapeHtml(t)}</option>`).join("");
       }
 
+      let quickMode = "all";
+
+      function setQuickFilter(nextMode) {
+        quickMode = nextMode || "all";
+        quickFilters.forEach((chip) => chip.classList.toggle("is-active", chip.getAttribute("data-filter") === quickMode));
+      }
+
       function render() {
         const q = searchInput ? searchInput.value : "";
         const cat = categorySelect ? categorySelect.value : "";
-        const active = filterProducts(products, q, cat);
+        const mode = sortSelect ? sortSelect.value : "featured";
+        const active = sortProducts(filterProducts(products, q, cat, quickMode), mode);
 
         if (statCount) statCount.textContent = String(active.length);
 
@@ -254,7 +310,15 @@
 
       if (searchInput) searchInput.addEventListener("input", render);
       if (categorySelect) categorySelect.addEventListener("change", render);
+      if (sortSelect) sortSelect.addEventListener("change", render);
+      quickFilters.forEach((chip) => {
+        chip.addEventListener("click", () => {
+          setQuickFilter(chip.getAttribute("data-filter") || "all");
+          render();
+        });
+      });
 
+      setQuickFilter("all");
       render();
     } catch (e) {
       console.error(e);
