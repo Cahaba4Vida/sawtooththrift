@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS products (
   CONSTRAINT products_price_chk CHECK (price_cents >= 0)
 );
 
+CREATE INDEX IF NOT EXISTS products_status_idx ON products (status);
+CREATE INDEX IF NOT EXISTS products_created_at_idx ON products (created_at DESC);
+
 CREATE TABLE IF NOT EXISTS ai_opportunities (
   opp_id TEXT PRIMARY KEY,
   category TEXT NOT NULL,
@@ -35,7 +38,12 @@ CREATE TABLE IF NOT EXISTS ai_opportunities (
   CONSTRAINT ai_opportunities_prices_chk CHECK (max_buy_price_cents >= 0 AND suggested_price_cents >= 0)
 );
 
+CREATE INDEX IF NOT EXISTS ai_opportunities_category_idx ON ai_opportunities (category);
+CREATE INDEX IF NOT EXISTS ai_opportunities_created_at_idx ON ai_opportunities (created_at DESC);
+
 CREATE TABLE IF NOT EXISTS processed_stripe_sessions (
   session_id TEXT PRIMARY KEY,
   processed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS processed_stripe_sessions_processed_at_idx ON processed_stripe_sessions (processed_at DESC);

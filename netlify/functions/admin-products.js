@@ -11,6 +11,32 @@ function parseBody(event) {
   try { return JSON.parse(event.body); } catch { return {}; }
 }
 
+function slugify(value) {
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
+async function generateProductId(title) {
+  const base = slugify(title) || `product-${Date.now()}`;
+  let candidate = base;
+  let counter = 2;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const existing = await query('SELECT id FROM products WHERE id=$1 LIMIT 1', [candidate]);
+    if (!existing.rows.length) return candidate;
+    candidate = `${base}-${counter}`;
+    counter += 1;
+  }
+}
+
+function isMissingTablesError(err) {
+  return err && (err.code === '42P01' || /relation .* does not exist/i.test(String(err.message || '')));
+}
+
 function toProduct(row) {
   return {
     ...row,
@@ -80,8 +106,40 @@ exports.handler = async (event, _context) => {
       return json(200, { ok: true, product: toProduct(rows[0]) });
     }
 
+    if (event.httpMethod === 'POST') {
+      const body = parseBody(event);
+      const title = String(body.title || '').trim();
+      if (!title) return json(400, { ok: false, error: 'Title is required' });
+
+      const rawId = String(body.id || '').trim();
+      const id = rawId || await generateProductId(title);
+      const description = String(body.description || '');
+      const currency = String(body.currency || 'usd').toLowerCase().trim() || 'usd';
+      const status = String(body.status || 'draft').toLowerCase().trim() || 'draft';
+      const photos = Array.isArray(body.photos) ? body.photos.map((x) => String(x || '').trim()).filter(Boolean) : [];
+      const inventory = body.inventory == null || body.inventory === '' ? 1 : Number(body.inventory);
+
+      if (!['draft', 'active', 'archived'].includes(status)) return json(400, { ok: false, error: 'Invalid status' });
+      if (!Number.isInteger(inventory) || inventory < 0) return json(400, { ok: false, error: 'inventory must be integer >= 0' });
+
+      const cents = body.price_cents != null ? Number(body.price_cents) : Math.round(Number(body.price) * 100);
+      if (!Number.isInteger(cents) || cents < 0) return json(400, { ok: false, error: 'price must be >= 0' });
+
+      const { rows } = await query(
+        `INSERT INTO products (id, status, title, description, price_cents, currency, photos, inventory)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8)
+         RETURNING *`,
+        [id, status, title, description, cents, currency, JSON.stringify(photos), inventory]
+      );
+
+      return json(201, { ok: true, product: toProduct(rows[0]) });
+    }
+
     return json(405, { ok: false, error: 'Method Not Allowed' });
   } catch (err) {
+    if (isMissingTablesError(err)) {
+      return json(500, { ok: false, error: 'DB tables missing. Go to Settings -> Initialize Database.' });
+    }
     return json(500, { ok: false, error: err.message || 'Server error' });
   }
 };
