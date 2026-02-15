@@ -873,6 +873,249 @@
       })();
     </script>
 
+    <style>
+      .st-await-launcher{
+        position: fixed;
+        left: 16px;
+        bottom: 116px;
+        z-index: 99998;
+        padding: 12px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(16,78,55,0.95);
+        color: #fff;
+        font: 700 14px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+        cursor: pointer;
+      }
+      .st-await-panel{
+        position: fixed;
+        left: 16px;
+        top: 16px;
+        width: min(980px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
+        z-index: 100000;
+        display: none;
+        border: 1px solid rgba(255,255,255,0.14);
+        border-radius: 14px;
+        background: rgba(11,15,20,0.98);
+        color: #fff;
+        overflow: hidden;
+      }
+      .st-await-panel.open{ display:block; }
+      .st-await-head{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px; border-bottom:1px solid rgba(255,255,255,0.12); }
+      .st-await-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+      .st-await-actions button{ border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.08); color:#fff; border-radius:10px; padding:8px 10px; cursor:pointer; }
+      .st-await-body{ padding:12px; overflow:auto; max-height: calc(100vh - 98px); }
+      .st-await-status{ font-size:12px; opacity:.75; margin-bottom:10px; }
+      .st-await-row{ border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:10px; margin-bottom:10px; display:grid; grid-template-columns: 1.2fr 1fr .8fr; gap:10px; }
+      .st-await-row b{ font-size:13px; }
+      .st-await-row small{ display:block; opacity:.75; margin-top:4px; font-size:12px; }
+      .st-await-row pre{ margin:0; white-space:pre-wrap; font:500 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; opacity:.9; }
+      .st-await-mini{ display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; justify-content:flex-end; }
+      .st-await-mini button{ border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.08); color:#fff; border-radius:10px; padding:8px 10px; cursor:pointer; }
+      @media (max-width: 860px){
+        .st-await-row{ grid-template-columns:1fr; }
+        .st-await-mini{ justify-content:flex-start; }
+      }
+    </style>
+
+    <button class="st-await-launcher" id="stAwaitLauncher" type="button">Awaiting Orders</button>
+    <div class="st-await-panel" id="stAwaitPanel" role="dialog" aria-label="Awaiting Orders">
+      <div class="st-await-head">
+        <div><b>Awaiting Orders</b><br/><small style="opacity:.75;">Recent paid checkouts + customer shipping labels</small></div>
+        <div class="st-await-actions">
+          <button type="button" id="stAwaitRefresh">Refresh</button>
+          <button type="button" id="stAwaitPrintAll">Print all labels</button>
+          <button type="button" id="stAwaitClose">Close</button>
+        </div>
+      </div>
+      <div class="st-await-body">
+        <div id="stAwaitStatus" class="st-await-status">Load recent paid orders from Stripe.</div>
+        <div id="stAwaitList"></div>
+      </div>
+    </div>
+
+    <script>
+      (function(){
+        const launcher = document.getElementById("stAwaitLauncher");
+        const panel = document.getElementById("stAwaitPanel");
+        const close = document.getElementById("stAwaitClose");
+        const refreshBtn = document.getElementById("stAwaitRefresh");
+        const printAllBtn = document.getElementById("stAwaitPrintAll");
+        const statusEl = document.getElementById("stAwaitStatus");
+        const listEl = document.getElementById("stAwaitList");
+        let orders = [];
+
+        function money(cents, currency){
+          if (typeof cents !== "number") return "";
+          const v = cents / 100;
+          return new Intl.NumberFormat(undefined, { style:"currency", currency:(currency||"usd").toUpperCase() }).format(v);
+        }
+
+        function escapeHtml(s){
+          return String(s || "").replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+        }
+
+        function setStatus(msg){ statusEl.textContent = msg || ""; }
+
+        async function getJwt(){
+          if (!window.netlifyIdentity) return null;
+          const user = window.netlifyIdentity.currentUser();
+          if (!user) return null;
+          try { return await user.jwt(); } catch(e){ return null; }
+        }
+
+        function hasAddress(rec){
+          return !!(rec && rec.name && rec.line1 && rec.city && rec.state && rec.zip);
+        }
+
+        function buildLabel(order){
+          const rec = order.recipient || {};
+          const itemLines = (order.items || []).map((it) => {
+            const qty = it.quantity || 1;
+            const unit = money(it.unit_amount, it.currency);
+            return `- ${it.name || "Item"}${qty > 1 ? ` x${qty}` : ""}${unit ? ` (${unit})` : ""}`;
+          }).join("\n");
+
+          return [
+            "FROM:",
+            "Sawtooth Thrift",
+            "Twin Falls, ID",
+            "",
+            "TO:",
+            rec.name || "",
+            rec.line1 || "",
+            rec.line2 || "",
+            `${rec.city || ""}, ${rec.state || ""} ${rec.zip || ""}`.trim(),
+            rec.country || "US",
+            "",
+            "ITEMS:",
+            itemLines || "- Item",
+            "",
+            `Order: ${order.id || "n/a"}`,
+            "Carrier: USPS / UPS",
+            "Service: Ground",
+            "Tracking #: ____________________",
+          ].filter(Boolean).join("\n");
+        }
+
+        function copy(text){
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).catch(() => {});
+          }
+        }
+
+        function printLabel(order){
+          if (!hasAddress(order.recipient)) {
+            setStatus("Missing shipping address for this order.");
+            return;
+          }
+          const label = buildLabel(order);
+          copy(label);
+          const w = window.open("", "_blank", "noopener,noreferrer,width=460,height=680");
+          if (!w || !w.document) return;
+          w.document.write(`<pre style="font:14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding:16px; white-space:pre-wrap;">${escapeHtml(label)}</pre>`);
+          w.document.close();
+          setStatus("Label copied and opened for printing.");
+        }
+
+        function render(){
+          listEl.innerHTML = "";
+          if (!orders.length) {
+            listEl.innerHTML = '<div class="st-await-status">No paid orders found.</div>';
+            return;
+          }
+          for (const order of orders){
+            const row = document.createElement("div");
+            row.className = "st-await-row";
+            const when = order.created ? new Date(order.created * 1000).toLocaleString() : "";
+            const itemsText = (order.items || []).map((it) => {
+              const qty = it.quantity || 1;
+              return `${it.name || "Item"}${qty > 1 ? ` x${qty}` : ""}`;
+            }).join("\n") || "No line items";
+
+            const rec = order.recipient || {};
+            row.innerHTML = `
+              <div>
+                <b>${escapeHtml(order.id || "Order")}</b>
+                <small>${escapeHtml(when)}</small>
+                <small>${escapeHtml(order.customer_email || "No customer email")}</small>
+                <small>${escapeHtml(order.payment_link_id ? ("Payment Link: " + order.payment_link_id) : "")}</small>
+              </div>
+              <div>
+                <b>${escapeHtml(rec.name || "No recipient yet")}</b>
+                <small>${escapeHtml((rec.line1 || "") + " " + (rec.line2 || ""))}</small>
+                <small>${escapeHtml((rec.city || "") + ", " + (rec.state || "") + " " + (rec.zip || ""))}</small>
+                <small>${escapeHtml(rec.country || "US")}</small>
+                <pre>${escapeHtml(itemsText)}</pre>
+              </div>
+              <div class="st-await-mini">
+                <button type="button" data-action="print">Print label</button>
+                <button type="button" data-action="copy">Copy label</button>
+              </div>
+            `;
+            row.querySelector('[data-action="print"]').addEventListener("click", () => printLabel(order));
+            row.querySelector('[data-action="copy"]').addEventListener("click", () => {
+              if (!hasAddress(order.recipient)) { setStatus("Missing shipping address for this order."); return; }
+              copy(buildLabel(order));
+              setStatus("Label copied.");
+            });
+            listEl.appendChild(row);
+          }
+        }
+
+        async function refresh(){
+          setStatus("Loading recent paid orders…");
+          const jwt = await getJwt();
+          if (!jwt){
+            setStatus("Please log in to admin first.");
+            return;
+          }
+          try {
+            const res = await fetch("/.netlify/functions/stripe-awaiting-orders?limit=50", {
+              headers: { "Authorization": "Bearer " + jwt }
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok){
+              setStatus((data && data.error) ? data.error : ("Request failed (" + res.status + ")"));
+              return;
+            }
+            orders = Array.isArray(data.orders) ? data.orders : [];
+            render();
+            setStatus("Loaded " + orders.length + " recent paid orders.");
+          } catch(e) {
+            setStatus("Could not load awaiting orders right now.");
+          }
+        }
+
+        function printAll(){
+          const printable = orders.filter((o) => hasAddress(o.recipient));
+          if (!printable.length){
+            setStatus("No orders with complete shipping addresses to print.");
+            return;
+          }
+          printable.forEach((o) => printLabel(o));
+        }
+
+        function toggle(open){
+          panel.classList.toggle("open", !!open);
+          launcher.style.display = open ? "none" : "";
+          if (open && !orders.length) refresh();
+        }
+
+        launcher.addEventListener("click", () => toggle(true));
+        close.addEventListener("click", () => toggle(false));
+        refreshBtn.addEventListener("click", refresh);
+        printAllBtn.addEventListener("click", printAll);
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Escape" && panel.classList.contains("open")) toggle(false);
+        });
+      })();
+    </script>
+
+
+
 
 
     <style>
