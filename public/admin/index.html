@@ -385,13 +385,14 @@
         <div class="st-stripe-actions">
           <a href="https://dashboard.stripe.com/acct_1SgZPbBON6LiE0Or/dashboard" target="_blank" rel="noopener">Open Stripe Dashboard</a>
           <button type="button" id="stStripeRefresh">Refresh</button>
+          <button type="button" id="stStripeAutoMatch">Auto-match current</button>
           <input id="stStripeSearch" type="text" placeholder="Search product…" />
           <button type="button" id="stStripeClose">Close</button>
         </div>
       </div>
       <div class="st-stripe-body">
         <div class="st-stripe-note">
-          Tip: open a product in Decap CMS, then use “Apply” to set <span class="st-muted">Price</span> and <span class="st-muted">Stripe Payment Link</span>.
+          Tip: open a product in Decap CMS, then use “Apply” to set <span class="st-muted">Price</span> and <span class="st-muted">Stripe Payment Link</span>. Shipping Label now auto-fills from latest paid Stripe order when available.
         </div>
         <div id="stStripeStatus" class="st-stripe-note"></div>
         <div id="stStripeList"></div>
@@ -405,6 +406,7 @@
         const panel = $("#stStripePanel");
         const btnClose = $("#stStripeClose");
         const btnRefresh = $("#stStripeRefresh");
+        const btnAutoMatch = $("#stStripeAutoMatch");
         const search = $("#stStripeSearch");
         const listEl = $("#stStripeList");
         const statusEl = $("#stStripeStatus");
@@ -480,6 +482,74 @@
           return true;
         }
 
+        function normalizeName(value){
+          return String(value || "")
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, " ")
+            .trim();
+        }
+
+        function findCurrentProductName(){
+          const nameEl = findCmsField(["Name"]);
+          if (!nameEl) return "";
+          return (nameEl.value || "").trim();
+        }
+
+        function scoreItemMatch(sourceName, candidate){
+          const src = normalizeName(sourceName);
+          const target = normalizeName(candidate.product_name || candidate.product_id || "");
+          if (!src || !target) return 0;
+          if (src === target) return 1000;
+          if (target.includes(src) || src.includes(target)) return 800;
+
+          const srcWords = src.split(/\s+/).filter(Boolean);
+          const targetWords = new Set(target.split(/\s+/).filter(Boolean));
+          if (!srcWords.length || !targetWords.size) return 0;
+          const overlap = srcWords.filter((w) => targetWords.has(w)).length;
+          return overlap * 10;
+        }
+
+        function findBestStripeMatch(productName){
+          if (!productName || !Array.isArray(cache) || !cache.length) return null;
+          let best = null;
+          let bestScore = 0;
+          for (const item of cache){
+            const score = scoreItemMatch(productName, item);
+            if (score > bestScore){
+              best = item;
+              bestScore = score;
+            }
+          }
+          return bestScore > 0 ? { item: best, score: bestScore } : null;
+        }
+
+        function autoMatchCurrentProduct(){
+          const currentName = findCurrentProductName();
+          if (!currentName){
+            setStatus("Open a product entry first (missing Name field).");
+            return;
+          }
+          if (!cache.length){
+            setStatus("No Stripe items loaded yet. Click Refresh first.");
+            return;
+          }
+
+          const match = findBestStripeMatch(currentName);
+          if (!match || !match.item){
+            setStatus("No Stripe match found for: " + currentName);
+            return;
+          }
+
+          applyToEditor(match.item);
+          if (search){
+            search.value = currentName;
+            render();
+          }
+          const matchName = match.item.product_name || match.item.product_id || "Stripe item";
+          setStatus(`Auto-matched “${currentName}” to “${matchName}”.`);
+          setTimeout(()=>setStatus(""), 2200);
+        }
+
         function applyToEditor(item){
           const priceValue = (typeof item.unit_amount === "number") ? (item.unit_amount / 100).toFixed(2) : "";
           const linkValue = item.payment_link_url || "";
@@ -531,8 +601,26 @@
           ].join("\n");
         }
 
-        async function openShippingLabel(item){
-          const recipient = {
+        async function fetchLatestOrderRecipient(item){
+          if (!item || !item.payment_link_id) return null;
+          const jwt = await getJwt();
+          if (!jwt) return null;
+
+          try {
+            const q = new URLSearchParams({ payment_link_id: item.payment_link_id });
+            const res = await fetch("/.netlify/functions/stripe-orders?" + q.toString(), {
+              headers: { "Authorization": "Bearer " + jwt }
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok || !data.order || !data.order.recipient) return null;
+            return data.order.recipient;
+          } catch (e) {
+            return null;
+          }
+        }
+
+        function promptRecipientFallback(){
+          return {
             name: prompt("Recipient full name:"),
             line1: prompt("Address line 1:"),
             line2: prompt("Address line 2 (optional):") || "",
@@ -541,8 +629,23 @@
             zip: prompt("ZIP code:"),
             country: prompt("Country code", "US") || "US",
           };
+        }
 
-          if (!recipient.name || !recipient.line1 || !recipient.city || !recipient.state || !recipient.zip) {
+        function hasRecipientRequiredFields(recipient){
+          return !!(recipient && recipient.name && recipient.line1 && recipient.city && recipient.state && recipient.zip);
+        }
+
+        async function openShippingLabel(item){
+          setStatus("Looking up latest paid order shipping address…");
+
+          let recipient = await fetchLatestOrderRecipient(item);
+          let usedAuto = true;
+          if (!hasRecipientRequiredFields(recipient)) {
+            usedAuto = false;
+            recipient = promptRecipientFallback();
+          }
+
+          if (!hasRecipientRequiredFields(recipient)) {
             setStatus("Shipping label canceled (missing required address fields).");
             return;
           }
@@ -556,8 +659,8 @@
             w.document.close();
           }
 
-          setStatus("Shipping label generated and copied.");
-          setTimeout(()=>setStatus(""), 1800);
+          setStatus(usedAuto ? "Shipping label auto-filled from latest paid order and copied." : "Shipping label generated and copied.");
+          setTimeout(()=>setStatus(""), 2200);
         }
 
         function rowTemplate(item){
@@ -676,6 +779,7 @@
         launcher.addEventListener("click", () => toggle(true));
         btnClose.addEventListener("click", () => toggle(false));
         btnRefresh.addEventListener("click", refresh);
+        btnAutoMatch.addEventListener("click", autoMatchCurrentProduct);
         search.addEventListener("input", render);
 
         // Close panel on Escape

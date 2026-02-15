@@ -2,7 +2,8 @@
 /.netlify/*  /.netlify/:splat  200
 
 # Make /admin routes resolve to the Decap app
-/admin/*     /admin/index.html 200
+/admin       /admin/index.html 200
+/admin/      /admin/index.html 200
 
 # If you use an SPA fallback for the rest of the site, keep it LAST
 /*           /index.html       200
