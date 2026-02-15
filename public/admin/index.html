@@ -3,1534 +3,398 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Sawtooth Thrift Admin</title>
-  
+    <title>Sawtooth Thrift Admin Dashboard</title>
     <style>
-      .st-save-fab{
-        position: fixed;
-        right: 16px;
-        bottom: 16px;
-        z-index: 99999;
-        padding: 12px 14px;
-        border-radius: 999px;
-        border: 1px solid rgba(255,255,255,0.18);
-        background: rgba(20,20,20,0.88);
-        color: #fff;
-        font: 600 14px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.35);
-        cursor: pointer;
-        user-select: none;
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background: #0b1220;
+        color: #e2e8f0;
       }
-      .st-save-fab:hover{ filter: brightness(1.05); }
-      .st-save-fab:active{ transform: translateY(1px); }
-      .st-save-fab small{
-        display:block;
-        font-weight: 500;
-        opacity: 0.75;
-        margin-top: 4px;
+      .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
+      .topbar {
+        display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px;
+        border:1px solid rgba(255,255,255,.12); border-radius:12px; background:#111827; padding:12px;
       }
+      .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+      .tab-btn, .btn, input, select, textarea {
+        border-radius:10px; border:1px solid rgba(255,255,255,.18); background:#1f2937; color:#fff;
+        font: inherit;
+      }
+      .tab-btn, .btn { padding:8px 12px; cursor:pointer; font-weight:700; }
+      .tab-btn.active { background:#2563eb; border-color:#3b82f6; }
+      .btn.ghost { background:transparent; }
+      .panel { display:none; border:1px solid rgba(255,255,255,.12); border-radius:12px; background:#111827; padding:12px; }
+      .panel.active { display:block; }
+      .muted { color:#94a3b8; font-size:.92rem; }
+      .status { margin:10px 0; min-height: 1.2rem; color:#93c5fd; }
+      .grid { display:grid; gap:10px; }
+      .opp, .card { border:1px solid rgba(255,255,255,.15); border-radius:12px; padding:10px; background:#0f172a; }
+      .opp h4, .card h4 { margin:0 0 6px; }
+      .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+      .pill { display:inline-block; border:1px solid rgba(255,255,255,.2); border-radius:999px; padding:2px 8px; font-size:.8rem; }
+      .danger { color:#fecaca; }
+      .split { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+      .products-grid { display:grid; gap:10px; }
+      .field { display:grid; gap:6px; }
+      input, select, textarea { padding:8px 10px; width:100%; }
+      textarea { min-height:84px; }
+      details summary { cursor:pointer; }
+      pre { white-space:pre-wrap; margin:6px 0; }
+      @media (max-width: 900px){ .split { grid-template-columns:1fr; } }
     </style>
-  
   </head>
   <body>
-    <!-- Decap CMS -->
-    <script>
-  (function () {
-    // Track save/publish network activity for Decap CMS (Netlify CMS) so we can show a clear "Saved" indicator.
-    window.__CMS_SAVE_STATE__ = { status: "idle", message: "", lastOkAt: 0, lastErrAt: 0 };
-
-    function setState(status, message) {
-      window.__setCmsSaveState = setState;
-      window.__CMS_SAVE_STATE__.status = status;
-      window.__CMS_SAVE_STATE__.message = message || "";
-      if (status === "saved") window.__CMS_SAVE_STATE__.lastOkAt = Date.now();
-      if (status === "error") window.__CMS_SAVE_STATE__.lastErrAt = Date.now();
-      window.dispatchEvent(new CustomEvent("st:cmsSaveState", { detail: window.__CMS_SAVE_STATE__ }));
-    }
-
-    // Patch fetch
-    const origFetch = window.fetch ? window.fetch.bind(window) : null;
-    if (origFetch) {
-      window.fetch = async function (input, init) {
-        try {
-          const url = typeof input === "string" ? input : (input && input.url) ? input.url : "";
-          const method = (init && init.method) ? String(init.method).toUpperCase() : "GET";
-
-          const isGitWrite = /\/\.netlify\/git\//.test(url) && (method !== "GET");
-          if (isGitWrite) setState("saving", "Saving…");
-
-          const res = await origFetch(input, init);
-
-          if (isGitWrite) {
-            if (res && res.ok) setState("saved", "Saved");
-            else setState("error", "Save failed");
-          }
-          return res;
-        } catch (err) {
-          setState("error", "Save failed");
-          throw err;
-        }
-      };
-    }
-
-    // Patch XHR (fallback)
-    const OrigXHR = window.XMLHttpRequest;
-    if (OrigXHR) {
-      function PatchedXHR() {
-        const xhr = new OrigXHR();
-        let _url = "";
-        let _method = "GET";
-        const origOpen = xhr.open;
-        xhr.open = function (method, url) {
-          _method = String(method || "GET").toUpperCase();
-          _url = String(url || "");
-          return origOpen.apply(xhr, arguments);
-        };
-        xhr.addEventListener("loadstart", function () {
-          if (/\/\.netlify\/git\//.test(_url) && _method !== "GET") setState("saving", "Saving…");
-        });
-        xhr.addEventListener("loadend", function () {
-          if (/\/\.netlify\/git\//.test(_url) && _method !== "GET") {
-            if (xhr.status >= 200 && xhr.status < 300) setState("saved", "Saved");
-            else setState("error", "Save failed");
-          }
-        });
-        xhr.addEventListener("error", function () {
-          if (/\/\.netlify\/git\//.test(_url) && _method !== "GET") setState("error", "Save failed");
-        });
-        return xhr;
-      }
-      window.XMLHttpRequest = PatchedXHR;
-    }
-
-    setState("idle", "");
-  })();
-</script>
-
-    <script>
-  (function loadDecapCms() {
-    const sources = [
-      "https://unpkg.com/decap-cms@3.8.3/dist/decap-cms.js",
-      "https://cdn.jsdelivr.net/npm/decap-cms@3.8.3/dist/decap-cms.js",
-      "https://unpkg.com/netlify-cms@2.10.192/dist/netlify-cms.js"
-    ];
-
-    function appendScript(i) {
-      if (i >= sources.length) {
-        console.error("Decap CMS failed to load from all CDNs.");
-        const msg = document.createElement("div");
-        msg.style.cssText = "position:fixed;inset:16px auto auto 16px;z-index:100000;background:#1f2937;color:#fff;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.2);font:600 13px/1.4 system-ui,sans-serif;max-width:min(560px,calc(100vw - 32px));";
-        msg.textContent = "Admin app failed to load from CDN sources. Hard refresh and disable blockers/VPN for this page, then retry.";
-        document.body.appendChild(msg);
-        return;
-      }
-
-      const s = document.createElement("script");
-      s.src = sources[i];
-      s.defer = true;
-      s.onerror = function () { appendScript(i + 1); };
-      document.head.appendChild(s);
-    }
-
-    appendScript(0);
-  })();
-</script>
-
-    <script>
-      (function () {
-        window.__CMS_DIRTY__ = false;
-
-        document.addEventListener("input", function (e) {
-          const t = e.target;
-          if (!t) return;
-          const tag = (t.tagName || "").toLowerCase();
-          if (tag === "input" || tag === "textarea" || tag === "select") {
-            window.__CMS_DIRTY__ = true;
-          }
-        }, true);
-
-        document.addEventListener("keydown", function (e) {
-          const t = e.target;
-          if (t && t.isContentEditable) window.__CMS_DIRTY__ = true;
-        }, true);
-
-        window.addEventListener("beforeunload", function (e) {
-          if (!window.__CMS_DIRTY__) return;
-          e.preventDefault();
-          e.returnValue = "";
-        });
-
-        function findAndClickSave() {
-          const candidates = Array.from(document.querySelectorAll("button, [role='button']"));
-          const byText = (re) => candidates.find(b => (b.textContent || "").trim().match(re));
-
-          const btn =
-            byText(/save\s*draft/i) ||
-            byText(/^save$/i) ||
-            byText(/save/i) ||
-            byText(/publish/i);
-
-          if (btn) {
-            btn.click();
-            setTimeout(() => { window.__CMS_DIRTY__ = false; }, 800);
-            return true;
-          }
-          return false;
-        }
-
-        const fab = document.createElement("button");
-        fab.type = "button";
-        fab.className = "st-save-fab";
-        fab.innerHTML = 'Save <small>(prevents losing edits)</small>';
-        fab.addEventListener("click", function () {
-          if (window.__setCmsSaveState) window.__setCmsSaveState("saving", "Saving…");
-          const ok = findAndClickSave();
-          if (!ok) setTimeout(findAndClickSave, 600);
-
-          // If saving is blocked (validation/auth) and no git request fires, surface it.
-          setTimeout(() => {
-            const st = window.__CMS_SAVE_STATE__ && window.__CMS_SAVE_STATE__.status ? window.__CMS_SAVE_STATE__.status : "idle";
-            if (st === "saving" && window.__CMS_DIRTY__) {
-              if (window.__setCmsSaveState) window.__setCmsSaveState("error", "Save blocked");
-            }
-          }, 2500);
-        });
-
-        document.addEventListener("DOMContentLoaded", function () {
-          document.body.appendChild(fab);
-        });
-      })();
-    </script>
-
-    <script>
-  (function () {
-    const badge = document.createElement("div");
-    badge.id = "st-cms-status";
-    badge.style.position = "fixed";
-    badge.style.top = "14px";
-    badge.style.right = "16px";
-    badge.style.zIndex = "100000";
-    badge.style.padding = "8px 10px";
-    badge.style.borderRadius = "999px";
-    badge.style.border = "1px solid rgba(0,0,0,0.10)";
-    badge.style.background = "rgba(255,255,255,0.92)";
-    badge.style.color = "#111";
-    badge.style.font = "700 12px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
-    badge.style.boxShadow = "0 10px 24px rgba(0,0,0,0.12)";
-    badge.style.userSelect = "none";
-    badge.style.pointerEvents = "none";
-    badge.textContent = "Saved";
-
-    function applyBadge(state) {
-      const st = state && state.status ? state.status : "idle";
-      if (st === "saving") badge.textContent = "Saving…";
-      else if (st === "error") badge.textContent = "Save failed";
-      else if (window.__CMS_DIRTY__) badge.textContent = "Unsaved changes";
-      else badge.textContent = "Saved";
-    }
-
-    function refreshBadge() {
-      applyBadge(window.__CMS_SAVE_STATE__);
-    }
-
-    window.addEventListener("st:cmsSaveState", (e) => {
-      applyBadge(e.detail);
-      if (e.detail && e.detail.status === "saved") window.__CMS_DIRTY__ = false;
-      if (e.detail && e.detail.status === "error") window.__CMS_DIRTY__ = true;
-    });
-
-    document.addEventListener("input", refreshBadge, true);
-    document.addEventListener("keydown", refreshBadge, true);
-
-    document.addEventListener("DOMContentLoaded", () => {
-      document.body.appendChild(badge);
-      refreshBadge();
-    });
-  })();
-</script>
-
-      <!-- Stripe Tools (Payment Links + Prices) -->
-    <style>
-      .st-stripe-launcher{
-        position: fixed;
-        left: 16px;
-        bottom: 16px;
-        z-index: 99999;
-        padding: 12px 14px;
-        border-radius: 999px;
-        border: 1px solid rgba(255,255,255,0.18);
-        background: rgba(11,15,20,0.92);
-        color: #fff;
-        font: 600 14px/1.1 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.35);
-        cursor: pointer;
-        user-select:none;
-      }
-      .st-stripe-panel{
-        position: fixed;
-        left: 16px;
-        bottom: 64px;
-        width: min(980px, calc(100vw - 32px));
-        max-height: min(70vh, 720px);
-        z-index: 99999;
-        border-radius: 16px;
-        border: 1px solid rgba(255,255,255,0.14);
-        background: rgba(11,15,20,0.96);
-        color: #fff;
-        box-shadow: 0 16px 40px rgba(0,0,0,0.45);
-        display:none;
-        overflow:hidden;
-      }
-      .st-stripe-panel.open{ display:block; }
-      .st-stripe-head{
-        display:flex;
-        gap:12px;
-        align-items:center;
-        justify-content:space-between;
-        padding: 12px 14px;
-        border-bottom: 1px solid rgba(255,255,255,0.12);
-      }
-      .st-stripe-title{
-        display:flex; flex-direction:column; gap:2px;
-      }
-      .st-stripe-title b{ font-size: 14px; letter-spacing: .2px; }
-      .st-stripe-title small{ font-size: 12px; opacity:.7; }
-      .st-stripe-actions{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-      .st-stripe-actions a, .st-stripe-actions button{
-        color:#fff;
-        background: rgba(255,255,255,0.08);
-        border: 1px solid rgba(255,255,255,0.14);
-        border-radius: 10px;
-        padding: 8px 10px;
-        font: 600 13px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-        cursor:pointer;
-        text-decoration:none;
-      }
-      .st-stripe-actions a:hover, .st-stripe-actions button:hover{ filter: brightness(1.08); }
-      .st-stripe-actions input{
-        width: 260px;
-        max-width: calc(100vw - 220px);
-        padding: 8px 10px;
-        border-radius: 10px;
-        border: 1px solid rgba(255,255,255,0.14);
-        background: rgba(0,0,0,0.25);
-        color:#fff;
-        outline:none;
-      }
-      .st-stripe-body{
-        padding: 10px 14px 14px;
-        overflow:auto;
-        max-height: calc(min(70vh, 720px) - 58px);
-      }
-      .st-stripe-row{
-        display:grid;
-        grid-template-columns: 1.4fr .6fr .8fr .9fr;
-        gap: 10px;
-        align-items:center;
-        padding: 10px 10px;
-        border: 1px solid rgba(255,255,255,0.10);
-        border-radius: 12px;
-        margin-bottom: 10px;
-        background: rgba(255,255,255,0.03);
-      }
-      .st-stripe-row b{ display:block; font-size: 13px; }
-      .st-stripe-row small{ display:block; font-size: 12px; opacity:.75; margin-top: 3px; word-break: break-word; }
-      .st-pill{
-        display:inline-flex; align-items:center;
-        padding: 3px 8px;
-        border-radius: 999px;
-        border: 1px solid rgba(255,255,255,0.14);
-        background: rgba(255,255,255,0.06);
-        font-size: 12px;
-        opacity: .9;
-        justify-self:start;
-        width: fit-content;
-      }
-      .st-mini-btn{
-        justify-self:end;
-        display:flex;
-        gap:8px;
-        flex-wrap:wrap;
-        justify-content:flex-end;
-      }
-      .st-mini-btn button{
-        padding: 8px 10px;
-        border-radius: 10px;
-        border: 1px solid rgba(255,255,255,0.14);
-        background: rgba(255,255,255,0.08);
-        color:#fff;
-        font: 600 12px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-        cursor:pointer;
-      }
-      .st-mini-btn button:active{ transform: translateY(1px); }
-      .st-stripe-note{
-        margin: 8px 0 12px;
-        font-size: 12px;
-        opacity:.75;
-      }
-      .st-muted{ opacity:.7; }
-      @media (max-width: 720px){
-        .st-stripe-row{ grid-template-columns: 1fr; }
-        .st-mini-btn{ justify-self:start; }
-        .st-stripe-actions input{ width: 180px; }
-      }
-    </style>
-
-    <button class="st-stripe-launcher" id="stStripeLauncher" type="button">Stripe Tools</button>
-
-    <div class="st-stripe-panel" id="stStripePanel" role="dialog" aria-label="Stripe Tools">
-      <div class="st-stripe-head">
-        <div class="st-stripe-title">
-          <b>Stripe Payment Links</b>
-          <small>Pull product prices + payment links and copy/apply into the editor.</small>
+    <main class="wrap">
+      <header class="topbar">
+        <div>
+          <strong>Sawtooth Thrift Admin</strong>
+          <div class="muted">DB-only dashboard (legacy CMS removed).</div>
         </div>
-        <div class="st-stripe-actions">
-          <a href="https://dashboard.stripe.com/acct_1SgZPbBON6LiE0Or/dashboard" target="_blank" rel="noopener">Open Stripe Dashboard</a>
-          <button type="button" id="stStripeRefresh">Refresh</button>
-          <button type="button" id="stStripeAutoMatch">Auto-match current</button>
-          <input id="stStripeSearch" type="text" placeholder="Search product…" />
-          <button type="button" id="stStripeClose">Close</button>
+        <div class="row">
+          <button class="btn ghost" id="refreshAllBtn" type="button">Refresh active tab</button>
+          <button class="btn ghost" id="logoutBtn" type="button">Logout</button>
         </div>
-      </div>
-      <div class="st-stripe-body">
-        <div class="st-stripe-note">
-          Tip: open a product in Decap CMS, then use “Apply” to set <span class="st-muted">Price</span> and <span class="st-muted">Stripe Payment Link</span>. Shipping Label now auto-fills from latest paid Stripe order when available.
+      </header>
+
+      <nav class="tabs" aria-label="Admin sections">
+        <button class="tab-btn active" data-tab="ai" type="button">AI Sourcing</button>
+        <button class="tab-btn" data-tab="products" type="button">DB Products</button>
+        <button class="tab-btn" data-tab="orders" type="button">Orders</button>
+      </nav>
+
+      <section class="status" id="globalStatus" aria-live="polite"></section>
+
+      <section class="panel active" id="tab-ai">
+        <h2 style="margin-top:0">AI Sourcing (Clothes & Shoes)</h2>
+        <p class="muted">Always displays exactly 3 opportunities. Accept creates draft product with default inventory=1. Decline refreshes queue immediately.</p>
+        <div class="row" style="margin-bottom:8px;">
+          <button class="btn" id="aiRefreshBtn" type="button">Refresh opportunities</button>
         </div>
-        <div id="stStripeStatus" class="st-stripe-note"></div>
-        <div id="stStripeList"></div>
-      </div>
-    </div>
+        <div class="split">
+          <div>
+            <h3>Opportunities</h3>
+            <div class="grid" id="aiOpportunities"></div>
+          </div>
+          <div>
+            <h3>AI Draft Products</h3>
+            <div class="grid" id="aiDrafts"></div>
+          </div>
+        </div>
+      </section>
 
-    <script>
-      (function(){
-        const $ = (sel) => document.querySelector(sel);
-        const launcher = $("#stStripeLauncher");
-        const panel = $("#stStripePanel");
-        const btnClose = $("#stStripeClose");
-        const btnRefresh = $("#stStripeRefresh");
-        const btnAutoMatch = $("#stStripeAutoMatch");
-        const search = $("#stStripeSearch");
-        const listEl = $("#stStripeList");
-        const statusEl = $("#stStripeStatus");
+      <section class="panel" id="tab-products">
+        <h2 style="margin-top:0">DB Products</h2>
+        <p class="muted">Edit title, price, description, inventory, and status. Setting status=active publishes instantly.</p>
+        <div class="row" style="margin-bottom:8px;">
+          <button class="btn" id="productsRefreshBtn" type="button">Refresh products</button>
+        </div>
+        <div class="products-grid" id="productsList"></div>
+      </section>
 
-        let cache = [];
-
-        function setStatus(msg){
-          if (!statusEl) return;
-          statusEl.textContent = msg || "";
-        }
-
-        function money(unitAmount, currency){
-          if (typeof unitAmount !== "number") return "";
-          const amt = unitAmount / 100;
-          const cur = (currency || "usd").toUpperCase();
-          // Keep it simple to avoid locale surprises in admin UI
-          return `${cur} ${amt.toFixed(2)}`;
-        }
-
-        async function copyToClipboard(text){
-          try{
-            await navigator.clipboard.writeText(text);
-            setStatus("Copied to clipboard.");
-            setTimeout(()=>setStatus(""), 1200);
-          }catch(e){
-            // Fallback
-            const ta = document.createElement("textarea");
-            ta.value = text;
-            ta.style.position = "fixed";
-            ta.style.opacity = "0";
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand("copy");
-            document.body.removeChild(ta);
-            setStatus("Copied to clipboard.");
-            setTimeout(()=>setStatus(""), 1200);
-          }
-        }
-
-        function findInputByLabelText(labelText){
-          const labels = Array.from(document.querySelectorAll("label"));
-          const label = labels.find(l => (l.textContent || "").trim().toLowerCase() === labelText.toLowerCase());
-          if (label){
-            const forId = label.getAttribute("for");
-            if (forId) return document.getElementById(forId);
-            const input = label.querySelector("input, textarea");
-            if (input) return input;
-          }
-          return null;
-        }
-
-        function findCmsField(labelCandidates){
-          for (const label of labelCandidates){
-            const el = findInputByLabelText(label);
-            if (el) return el;
-          }
-          // fallback: search common input types by aria-label
-          const all = Array.from(document.querySelectorAll("input, textarea"));
-          for (const cand of labelCandidates){
-            const lc = cand.toLowerCase();
-            const el = all.find(x => ((x.getAttribute("aria-label")||"").toLowerCase() === lc));
-            if (el) return el;
-          }
-          return null;
-        }
-
-        function setFieldValue(el, value){
-          if (!el) return false;
-          el.focus();
-          el.value = value;
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-          return true;
-        }
-
-        function normalizeName(value){
-          return String(value || "")
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, " ")
-            .trim();
-        }
-
-        function findCurrentProductName(){
-          const nameEl = findCmsField(["Name"]);
-          if (!nameEl) return "";
-          return (nameEl.value || "").trim();
-        }
-
-        function scoreItemMatch(sourceName, candidate){
-          const src = normalizeName(sourceName);
-          const target = normalizeName(candidate.product_name || candidate.product_id || "");
-          if (!src || !target) return 0;
-          if (src === target) return 1000;
-          if (target.includes(src) || src.includes(target)) return 800;
-
-          const srcWords = src.split(/\s+/).filter(Boolean);
-          const targetWords = new Set(target.split(/\s+/).filter(Boolean));
-          if (!srcWords.length || !targetWords.size) return 0;
-          const overlap = srcWords.filter((w) => targetWords.has(w)).length;
-          return overlap * 10;
-        }
-
-        function findBestStripeMatch(productName){
-          if (!productName || !Array.isArray(cache) || !cache.length) return null;
-          let best = null;
-          let bestScore = 0;
-          for (const item of cache){
-            const score = scoreItemMatch(productName, item);
-            if (score > bestScore){
-              best = item;
-              bestScore = score;
-            }
-          }
-          return bestScore > 0 ? { item: best, score: bestScore } : null;
-        }
-
-        function autoMatchCurrentProduct(){
-          const currentName = findCurrentProductName();
-          if (!currentName){
-            setStatus("Open a product entry first (missing Name field).");
-            return;
-          }
-          if (!cache.length){
-            setStatus("No Stripe items loaded yet. Click Refresh first.");
-            return;
-          }
-
-          const match = findBestStripeMatch(currentName);
-          if (!match || !match.item){
-            setStatus("No Stripe match found for: " + currentName);
-            return;
-          }
-
-          applyToEditor(match.item);
-          if (search){
-            search.value = currentName;
-            render();
-          }
-          const matchName = match.item.product_name || match.item.product_id || "Stripe item";
-          setStatus(`Auto-matched “${currentName}” to “${matchName}”.`);
-          setTimeout(()=>setStatus(""), 2200);
-        }
-
-        function applyToEditor(item){
-          const priceValue = (typeof item.unit_amount === "number") ? (item.unit_amount / 100).toFixed(2) : "";
-          const linkValue = item.payment_link_url || "";
-
-          const priceEl = findCmsField(["Price"]);
-          const linkEl = findCmsField(["Stripe Payment Link", "Stripe payment link", "Stripe Payment link"]);
-
-          const ok1 = setFieldValue(priceEl, priceValue);
-          const ok2 = setFieldValue(linkEl, linkValue);
-
-          if (ok1 || ok2){
-            setStatus("Applied to editor fields.");
-            setTimeout(()=>setStatus(""), 1500);
-          } else {
-            setStatus("Could not find editor fields. Use Copy buttons instead.");
-          }
-        }
-
-
-        function buildShippingLabel(item, recipient) {
-          const fromName = "Sawtooth Thrift";
-          const fromLine1 = "Twin Falls, ID";
-          const toBlock = [
-            recipient.name,
-            recipient.line1,
-            recipient.line2,
-            `${recipient.city}, ${recipient.state} ${recipient.zip}`,
-            recipient.country || "US",
-          ].filter(Boolean).join("\n");
-
-          const itemLine = `${item.product_name || item.product_id || "Item"} (${money(item.unit_amount, item.currency)})`;
-          const orderRef = item.payment_link_id || item.price_id || "n/a";
-
-          return [
-            "FROM:",
-            fromName,
-            fromLine1,
-            "",
-            "TO:",
-            toBlock,
-            "",
-            "ITEM:",
-            itemLine,
-            `Ref: ${orderRef}`,
-            "",
-            "Carrier: USPS / UPS",
-            "Service: Ground",
-            "Tracking #: ____________________",
-          ].join("\n");
-        }
-
-        async function fetchLatestOrderRecipient(item){
-          if (!item || !item.payment_link_id) return null;
-          try {
-            const q = new URLSearchParams({ payment_link_id: item.payment_link_id });
-            const res = await fetch("/.netlify/functions/stripe-orders?" + q.toString(), {
-              credentials: "include"
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok || !data.ok || !data.order || !data.order.recipient) return null;
-            return data.order.recipient;
-          } catch (e) {
-            return null;
-          }
-        }
-
-        function promptRecipientFallback(){
-          return {
-            name: prompt("Recipient full name:"),
-            line1: prompt("Address line 1:"),
-            line2: prompt("Address line 2 (optional):") || "",
-            city: prompt("City:"),
-            state: prompt("State (e.g. ID):"),
-            zip: prompt("ZIP code:"),
-            country: prompt("Country code", "US") || "US",
-          };
-        }
-
-        function hasRecipientRequiredFields(recipient){
-          return !!(recipient && recipient.name && recipient.line1 && recipient.city && recipient.state && recipient.zip);
-        }
-
-        async function openShippingLabel(item){
-          setStatus("Looking up latest paid order shipping address…");
-
-          let recipient = await fetchLatestOrderRecipient(item);
-          let usedAuto = true;
-          if (!hasRecipientRequiredFields(recipient)) {
-            usedAuto = false;
-            recipient = promptRecipientFallback();
-          }
-
-          if (!hasRecipientRequiredFields(recipient)) {
-            setStatus("Shipping label canceled (missing required address fields).");
-            return;
-          }
-
-          const label = buildShippingLabel(item, recipient);
-          copyToClipboard(label);
-
-          const w = window.open("", "_blank", "noopener,noreferrer,width=420,height=620");
-          if (w && w.document) {
-            w.document.write(`<pre style="font:14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding:16px; white-space:pre-wrap;">${escapeHtml(label)}</pre>`);
-            w.document.close();
-          }
-
-          setStatus(usedAuto ? "Shipping label auto-filled from latest paid order and copied." : "Shipping label generated and copied.");
-          setTimeout(()=>setStatus(""), 2200);
-        }
-
-        function rowTemplate(item){
-          const title = item.product_name || item.product_id || "Stripe item";
-          const priceStr = money(item.unit_amount, item.currency);
-          const priceId = item.price_id ? `Price: ${item.price_id}` : "";
-          const plId = item.payment_link_id ? `Link: ${item.payment_link_id}` : "";
-          const active = item.payment_link_active ? "Active" : "Inactive";
-          const url = item.payment_link_url || "";
-
-          const div = document.createElement("div");
-          div.className = "st-stripe-row";
-          div.innerHTML = `
-            <div>
-              <b>${escapeHtml(title)}</b>
-              <small>${escapeHtml(priceStr)} <span class="st-muted">•</span> <span class="st-muted">${escapeHtml(active)}</span></small>
-              <small class="st-muted">${escapeHtml(priceId)} ${plId ? "• " + escapeHtml(plId) : ""}</small>
-              <small><a href="${escapeAttr(url)}" target="_blank" rel="noopener" style="color:#fff; opacity:.9;">${escapeHtml(url)}</a></small>
-            </div>
-            <div class="st-pill">${escapeHtml((item.currency||"usd").toUpperCase())}</div>
-            <div class="st-pill">${item.recurring ? "Recurring" : "One-time"}</div>
-            <div class="st-mini-btn">
-              <button type="button" data-action="copy-price">Copy Price</button>
-              <button type="button" data-action="copy-link">Copy Link</button>
-              <button type="button" data-action="apply">Apply</button>
-              <button type="button" data-action="label">Shipping Label</button>
-            </div>
-          `;
-
-          div.querySelector('[data-action="copy-price"]').addEventListener("click", () => {
-            const priceValue = (typeof item.unit_amount === "number") ? (item.unit_amount / 100).toFixed(2) : "";
-            copyToClipboard(priceValue);
-          });
-          div.querySelector('[data-action="copy-link"]').addEventListener("click", () => copyToClipboard(url));
-          div.querySelector('[data-action="apply"]').addEventListener("click", () => applyToEditor(item));
-          div.querySelector('[data-action="label"]').addEventListener("click", () => openShippingLabel(item));
-
-          return div;
-        }
-
-        function escapeHtml(s){
-          return String(s || "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
-        }
-        function escapeAttr(s){
-          return escapeHtml(s).replace(/"/g, "&quot;");
-        }
-
-        function render(){
-          const q = (search && search.value ? search.value.trim().toLowerCase() : "");
-          const items = !q ? cache : cache.filter(x => (x.product_name||"").toLowerCase().includes(q) || (x.product_id||"").toLowerCase().includes(q));
-          listEl.innerHTML = "";
-          if (!items.length){
-            const empty = document.createElement("div");
-            empty.className = "st-stripe-note";
-            empty.textContent = q ? "No matches." : "No items loaded yet.";
-            listEl.appendChild(empty);
-            return;
-          }
-          for (const item of items){
-            listEl.appendChild(rowTemplate(item));
-          }
-        }
-
-        async function refresh(){
-          setStatus("Loading from Stripe…");
-          cache = [];
-          render();
-
-          try{
-            const res = await fetch("/.netlify/functions/stripe-payment-links", {
-              credentials: "include"
-            });
-            const data = await res.json().catch(()=> ({}));
-            if (!res.ok || !data.ok){
-              setStatus((data && data.error) ? data.error : ("Request failed ("+res.status+")"));
-              return;
-            }
-            cache = Array.isArray(data.items) ? data.items : [];
-            setStatus("Loaded " + cache.length + " items.");
-            setTimeout(()=>setStatus(""), 1500);
-            render();
-          }catch(e){
-            setStatus("Error loading Stripe data.");
-          }
-        }
-
-        function toggle(open){
-          if (open){
-            panel.classList.add("open");
-            launcher.style.display = "none";
-            // auto-load on first open if empty
-            if (!cache.length) refresh();
-          } else {
-            panel.classList.remove("open");
-            launcher.style.display = "";
-          }
-        }
-
-        launcher.addEventListener("click", () => toggle(true));
-        btnClose.addEventListener("click", () => toggle(false));
-        btnRefresh.addEventListener("click", refresh);
-        btnAutoMatch.addEventListener("click", autoMatchCurrentProduct);
-        search.addEventListener("input", render);
-
-        // Close panel on Escape
-        document.addEventListener("keydown", (e) => {
-          if (e.key === "Escape" && panel.classList.contains("open")) toggle(false);
-        });
-      })();
-    </script>
-
-    <style>
-      .st-admin-quickbar{
-        position: fixed;
-        right: 16px;
-        bottom: 82px;
-        z-index: 99998;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .st-admin-quickbar a, .st-admin-quickbar button{
-        border: 1px solid rgba(255,255,255,0.18);
-        background: rgba(11,15,20,0.92);
-        color: #fff;
-        border-radius: 10px;
-        padding: 9px 12px;
-        font: 600 13px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-        text-decoration: none;
-      }
-      @media (max-width: 640px){
-        .st-admin-quickbar{ right: 12px; bottom: 74px; }
-        .st-admin-quickbar a, .st-admin-quickbar button{ padding: 12px 14px; font-size: 14px; }
-      }
-    </style>
-    <script>
-      (function(){
-        const bar = document.createElement("div");
-        bar.className = "st-admin-quickbar";
-
-        const live = document.createElement("a");
-        live.href = "/";
-        live.target = "_blank";
-        live.rel = "noopener";
-        live.textContent = "Open storefront";
-
-        const add = document.createElement("button");
-        add.type = "button";
-        add.textContent = "New product";
-        add.addEventListener("click", () => {
-          const buttons = Array.from(document.querySelectorAll("button, [role='button']"));
-          const create = buttons.find((b) => /new|create/i.test((b.textContent || "").trim()));
-          if (create) create.click();
-        });
-
-        const search = document.createElement("button");
-        search.type = "button";
-        search.textContent = "Focus search";
-        search.addEventListener("click", () => {
-          const input = document.querySelector("input[type='search'], input[placeholder*='Search'], input[aria-label*='Search']");
-          if (input) input.focus();
-        });
-
-        bar.append(live, add, search);
-        document.addEventListener("DOMContentLoaded", () => document.body.appendChild(bar));
-      })();
-    </script>
-
-    <style>
-      .st-await-launcher{
-        position: fixed;
-        left: 16px;
-        bottom: 116px;
-        z-index: 99998;
-        padding: 12px 14px;
-        border-radius: 999px;
-        border: 1px solid rgba(255,255,255,0.18);
-        background: rgba(16,78,55,0.95);
-        color: #fff;
-        font: 700 14px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.35);
-        cursor: pointer;
-      }
-      .st-await-panel{
-        position: fixed;
-        left: 16px;
-        top: 16px;
-        width: min(980px, calc(100vw - 32px));
-        max-height: calc(100vh - 32px);
-        z-index: 100000;
-        display: none;
-        border: 1px solid rgba(255,255,255,0.14);
-        border-radius: 14px;
-        background: rgba(11,15,20,0.98);
-        color: #fff;
-        overflow: hidden;
-      }
-      .st-await-panel.open{ display:block; }
-      .st-await-head{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px; border-bottom:1px solid rgba(255,255,255,0.12); }
-      .st-await-actions{ display:flex; gap:8px; flex-wrap:wrap; }
-      .st-await-actions button{ border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.08); color:#fff; border-radius:10px; padding:8px 10px; cursor:pointer; }
-      .st-await-body{ padding:12px; overflow:auto; max-height: calc(100vh - 98px); }
-      .st-await-status{ font-size:12px; opacity:.75; margin-bottom:10px; }
-      .st-await-row{ border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:10px; margin-bottom:10px; display:grid; grid-template-columns: 1.2fr 1fr .8fr; gap:10px; }
-      .st-await-row b{ font-size:13px; }
-      .st-await-row small{ display:block; opacity:.75; margin-top:4px; font-size:12px; }
-      .st-await-row pre{ margin:0; white-space:pre-wrap; font:500 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; opacity:.9; }
-      .st-await-mini{ display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; justify-content:flex-end; }
-      .st-await-mini button{ border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.08); color:#fff; border-radius:10px; padding:8px 10px; cursor:pointer; }
-      @media (max-width: 860px){
-        .st-await-row{ grid-template-columns:1fr; }
-        .st-await-mini{ justify-content:flex-start; }
-      }
-    </style>
-
-    <button class="st-await-launcher" id="stAwaitLauncher" type="button">Orders</button>
-    <div class="st-await-panel" id="stAwaitPanel" role="dialog" aria-label="Orders">
-      <div class="st-await-head">
-        <div><b>Orders</b><br/><small style="opacity:.75;">Paid Stripe checkouts for fulfillment</small></div>
-        <div class="st-await-actions">
-          <select id="stOrderStatus" style="border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.08);color:#fff;border-radius:10px;padding:8px 10px;">
+      <section class="panel" id="tab-orders">
+        <h2 style="margin-top:0">Orders</h2>
+        <p class="muted">Paid Stripe checkouts for fulfillment. Print packing slip and optionally mark shipped.</p>
+        <div class="row" style="margin-bottom:8px;">
+          <select id="orderStatus">
             <option value="unshipped">Unshipped</option>
             <option value="shipped">Shipped</option>
             <option value="all">All</option>
           </select>
-          <input id="stOrderSearch" type="search" placeholder="Search email or order id" style="min-width:220px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.08);color:#fff;border-radius:10px;padding:8px 10px;" />
-          <button type="button" id="stAwaitRefresh">Refresh</button>
-          <button type="button" id="stAwaitClose">Close</button>
+          <input id="orderSearch" type="search" placeholder="Search order id or email" />
+          <button class="btn" id="ordersRefreshBtn" type="button">Refresh orders</button>
         </div>
-      </div>
-      <div class="st-await-body">
-        <div class="card" style="padding:10px;margin-bottom:10px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.12);border-radius:10px;">
-          <b style="font-size:13px;">System</b>
-          <div id="stSystemStatus" class="st-await-status" style="margin-top:6px;margin-bottom:0;">Checking system status…</div>
-        </div>
-        <div id="stAwaitStatus" class="st-await-status">Load paid orders from Stripe.</div>
-        <div id="stAwaitList"></div>
-      </div>
-    </div>
+        <div class="grid" id="ordersList"></div>
+      </section>
+    </main>
 
     <script>
       (function(){
-        const launcher = document.getElementById("stAwaitLauncher");
-        const panel = document.getElementById("stAwaitPanel");
-        const close = document.getElementById("stAwaitClose");
-        const refreshBtn = document.getElementById("stAwaitRefresh");
-        const statusEl = document.getElementById("stAwaitStatus");
-        const listEl = document.getElementById("stAwaitList");
-        const statusFilterEl = document.getElementById("stOrderStatus");
-        const searchEl = document.getElementById("stOrderSearch");
-        const systemEl = document.getElementById("stSystemStatus");
-        let orders = [];
-        const trackingById = Object.create(null);
+        const $ = (sel) => document.querySelector(sel);
+        const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+        const state = { activeTab: 'ai', products: [], drafts: [] };
 
-        function money(cents, currency){
-          if (typeof cents !== "number") return "";
-          return new Intl.NumberFormat(undefined, { style:"currency", currency:(currency||"usd").toUpperCase() }).format(cents / 100);
-        }
+        function esc(s){ return String(s||'').replace(/[&<>"']/g, (c)=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+        function money(n){ const v=Number(n||0); return Number.isFinite(v) ? `$${v.toFixed(2)}` : '$0.00'; }
+        function setStatus(msg, isErr){ const el=$('#globalStatus'); el.textContent=msg||''; el.style.color=isErr?'#fca5a5':'#93c5fd'; }
 
-        function escapeHtml(s){
-          return String(s || "").replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
-        }
-
-        function setStatus(msg){ statusEl.textContent = msg || ""; }
-
-
-
-        async function loadSystem(){
-          if (!systemEl) return;
-          try {
-            const res = await fetch("/.netlify/functions/health", {
-              credentials: "include"
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok || !data.ok) {
-              systemEl.textContent = (data && data.error) ? data.error : "Health check failed.";
-              return;
-            }
-            const stripeOk = data.stripeKeyPresent ? "yes" : "no";
-            const siteUrl = data.siteUrl || "(not set)";
-            let msg = `Stripe configured: ${stripeOk} • Site URL: ${siteUrl}`;
-            if (!data.stripeKeyPresent) msg += " • Remediation: Set STRIPE_SECRET_KEY in Netlify environment.";
-            if (!data.siteUrl) msg += " • Optional: set SITE_URL (Netlify URL is used automatically when available).";
-            systemEl.textContent = msg;
-          } catch (e) {
-            systemEl.textContent = "Health check failed. Verify function deployment and env vars.";
-          }
-        }
-
-        function buildPackingSlip(order){
-          const rec = order.recipient || {};
-          const when = order.created ? new Date(order.created * 1000).toLocaleString() : "";
-          const itemLines = (order.items || []).map((it) => `${it.quantity || 1} x ${it.name || "Item"}`).join("\n");
-          const tracking = trackingById[order.id] != null ? trackingById[order.id] : (order.tracking || "");
-
-          return [
-            "PACKING SLIP",
-            "",
-            "SHIP TO:",
-            rec.name || "",
-            rec.line1 || "",
-            rec.line2 || "",
-            `${rec.city || ""}, ${rec.state || ""} ${rec.zip || ""}`.trim(),
-            rec.country || "",
-            "",
-            `Order ID: ${order.id || "n/a"}`,
-            `Date: ${when || "n/a"}`,
-            `Customer: ${order.customer_email || "n/a"}`,
-            "",
-            "ITEMS:",
-            itemLines || "1 x Item",
-            "",
-            `UPS Tracking: ${tracking || "____________"}`,
-          ].filter(Boolean).join("\n");
-        }
-
-        function printPackingSlip(order){
-          const slip = buildPackingSlip(order);
-          const w = window.open("", "_blank", "noopener,noreferrer,width=640,height=820");
-          if (!w || !w.document) return;
-          w.document.write(`<html><head><title>Packing Slip</title><style>body{font:14px/1.45 system-ui,Arial,sans-serif;padding:18px;color:#111}pre{white-space:pre-wrap;font:700 14px/1.45 ui-monospace,Menlo,monospace}.ship{font:700 20px/1.25 system-ui;margin-bottom:10px}.line{border-bottom:1px solid #111;display:inline-block;min-width:220px;}</style></head><body><div class="ship">SHIP TO</div><pre>${escapeHtml(slip)}</pre></body></html>`);
-          w.document.close();
-          w.focus();
-          setTimeout(() => { try { w.print(); } catch(_) {} }, 150);
-        }
-
-        function copyShipTo(order){
-          const rec = order.recipient || {};
-          const text = [rec.name, rec.line1, rec.line2, `${rec.city || ""}, ${rec.state || ""} ${rec.zip || ""}`.trim(), rec.country].filter(Boolean).join("\n");
-          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(() => {});
-          setStatus("Ship-to address copied.");
-        }
-
-        async function markShipped(order){
-          const tracking = trackingById[order.id] != null ? trackingById[order.id] : (order.tracking || "");
-          setStatus("Marking shipped…");
-          try {
-            const res = await fetch("/.netlify/functions/stripe-mark-shipped", {
-              method: "POST",
-              credentials: "include",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ sessionId: order.id, tracking }),
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok || !data.ok){
-              setStatus((data && data.error) ? data.error : ("Request failed (" + res.status + ")"));
-              return;
-            }
-            order.fulfillment_status = "shipped";
-            order.tracking = tracking || "";
-            order.shipped_at = new Date().toISOString();
-            render();
-            setStatus("Order marked shipped.");
-          } catch(e) {
-            setStatus("Could not mark shipped right now.");
-          }
-        }
-
-        function filteredOrders(){
-          const st = String(statusFilterEl && statusFilterEl.value ? statusFilterEl.value : "unshipped").toLowerCase();
-          const q = String(searchEl && searchEl.value ? searchEl.value : "").toLowerCase().trim();
-          return orders.filter((o) => {
-            if (st !== "all" && String(o.fulfillment_status || "unshipped") !== st) return false;
-            if (!q) return true;
-            return String(o.id || "").toLowerCase().includes(q) || String(o.customer_email || "").toLowerCase().includes(q);
-          });
-        }
-
-        function render(){
-          const list = filteredOrders();
-          listEl.innerHTML = "";
-          if (!list.length) {
-            listEl.innerHTML = '<div class="st-await-status">No matching orders.</div>';
-            return;
-          }
-
-          for (const order of list){
-            const row = document.createElement("details");
-            row.className = "st-await-row";
-            const rec = order.recipient || {};
-            const when = order.created ? new Date(order.created * 1000).toLocaleString() : "";
-            const itemsText = (order.items || []).map((it) => `${it.quantity || 1} x ${it.name || "Item"}`).join("\n") || "No line items";
-            const tracking = trackingById[order.id] != null ? trackingById[order.id] : (order.tracking || "");
-
-            row.innerHTML = `
-              <summary style="cursor:pointer;list-style:none;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;">
-                <div>
-                  <b>${escapeHtml((order.id || "").slice(0, 24))}${(order.id || "").length > 24 ? "…" : ""}</b>
-                  <small>${escapeHtml(when)}</small>
-                  <small>${escapeHtml(order.customer_email || "No email")}</small>
-                  <small>${escapeHtml(money(order.amount_total, order.currency) || "")}</small>
-                </div>
-                <div><small>${escapeHtml(String(order.fulfillment_status || "unshipped").toUpperCase())}</small></div>
-              </summary>
-              <div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-                  <div>
-                    <b>Ship To</b>
-                    <small>${escapeHtml(rec.name || "")}</small>
-                    <small>${escapeHtml(rec.line1 || "")}</small>
-                    <small>${escapeHtml(rec.line2 || "")}</small>
-                    <small>${escapeHtml((rec.city || "") + ", " + (rec.state || "") + " " + (rec.zip || ""))}</small>
-                    <small>${escapeHtml(rec.country || "")}</small>
-                  </div>
-                  <div>
-                    <b>Items</b>
-                    <pre>${escapeHtml(itemsText)}</pre>
-                  </div>
-                </div>
-                <div class="st-await-mini" style="margin-top:8px;justify-content:flex-start;">
-                  <input type="text" data-action="tracking" placeholder="Tracking #" value="${escapeHtml(tracking)}" style="width:180px;padding:8px 9px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.08);color:#fff;" />
-                  <button type="button" data-action="print">Print packing slip</button>
-                  <button type="button" data-action="copy">Copy ship-to address</button>
-                  <button type="button" data-action="ship">Mark shipped</button>
-                </div>
-              </div>
-            `;
-
-            const trackingInput = row.querySelector('[data-action="tracking"]');
-            trackingInput.addEventListener("input", () => { trackingById[order.id] = trackingInput.value || ""; });
-            row.querySelector('[data-action="print"]').addEventListener("click", () => printPackingSlip(order));
-            row.querySelector('[data-action="copy"]').addEventListener("click", () => copyShipTo(order));
-            row.querySelector('[data-action="ship"]').addEventListener("click", () => markShipped(order));
-
-            listEl.appendChild(row);
-          }
-        }
-
-        async function refresh(){
-          setStatus("Loading paid orders…");
-          try {
-            const status = String(statusFilterEl && statusFilterEl.value ? statusFilterEl.value : "unshipped");
-            const q = String(searchEl && searchEl.value ? searchEl.value : "").trim();
-            const params = new URLSearchParams({ limit: "50", status, q });
-            const res = await fetch("/.netlify/functions/stripe-orders?" + params.toString(), {
-              credentials: "include"
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok || !data.ok){
-              setStatus((data && data.error) ? data.error : ("Request failed (" + res.status + ")"));
-              return;
-            }
-            orders = Array.isArray(data.orders) ? data.orders : [];
-            render();
-            setStatus("Loaded " + orders.length + " orders.");
-          } catch(e) {
-            setStatus("Could not load orders right now.");
-          }
-        }
-
-        function toggle(open){
-          panel.classList.toggle("open", !!open);
-          launcher.style.display = open ? "none" : "";
-          if (open) { loadSystem(); refresh(); }
-        }
-
-        launcher.addEventListener("click", () => toggle(true));
-        close.addEventListener("click", () => toggle(false));
-        refreshBtn.addEventListener("click", refresh);
-        statusFilterEl.addEventListener("change", refresh);
-        searchEl.addEventListener("keydown", (e) => { if (e.key === "Enter") refresh(); });
-        document.addEventListener("keydown", (e) => {
-          if (e.key === "Escape" && panel.classList.contains("open")) toggle(false);
-        });
-      })();
-    </script>
-
-
-
-
-
-    <style>
-      .st-ai-launcher{
-        position: fixed;
-        left: 16px;
-        bottom: 64px;
-        z-index: 99998;
-        padding: 12px 14px;
-        border-radius: 999px;
-        border: 1px solid rgba(255,255,255,0.18);
-        background: rgba(28,18,52,0.95);
-        color: #fff;
-        font: 700 14px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.35);
-        cursor: pointer;
-      }
-      .st-ai-panel{
-        position: fixed;
-        left: 16px;
-        top: 16px;
-        width: min(560px, calc(100vw - 32px));
-        max-height: calc(100vh - 32px);
-        z-index: 100000;
-        display: none;
-        border: 1px solid rgba(255,255,255,0.14);
-        border-radius: 14px;
-        background: rgba(11,15,20,0.98);
-        color: #fff;
-        overflow: hidden;
-      }
-      .st-ai-panel.open{ display: block; }
-      .st-ai-head{ display:flex; justify-content:space-between; align-items:center; gap:8px; padding:12px; border-bottom:1px solid rgba(255,255,255,0.12); }
-      .st-ai-body{ display:grid; gap:10px; padding:12px; }
-      .st-ai-q{ width:100%; min-height:84px; border-radius:10px; border:1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.06); color:#fff; padding:10px; }
-      .st-ai-actions{ display:flex; gap:8px; flex-wrap:wrap; }
-      .st-ai-actions button{ border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.08); color:#fff; border-radius:10px; padding:8px 10px; cursor:pointer; }
-      .st-ai-out{ white-space:pre-wrap; font: 500 13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:10px; min-height:110px; max-height:50vh; overflow:auto; }
-      .st-ai-loading{ display:none; align-items:center; gap:8px; font-size:12px; opacity:0.85; }
-      .st-ai-loading.show{ display:flex; }
-      .st-ai-dots i{ display:inline-block; width:6px; height:6px; border-radius:50%; background:#fff; margin-right:4px; opacity:.4; animation: stDot 1s infinite; }
-      .st-ai-dots i:nth-child(2){ animation-delay:.2s; }
-      .st-ai-dots i:nth-child(3){ animation-delay:.4s; }
-      @keyframes stDot { 0%,80%,100%{opacity:.25; transform: translateY(0);} 40%{opacity:1; transform: translateY(-2px);} }
-    </style>
-
-    <button class="st-ai-launcher" id="stAiLauncher" type="button">AI Insights</button>
-    <div class="st-ai-panel" id="stAiPanel" role="dialog" aria-label="AI Insights">
-      <div class="st-ai-head">
-        <div><b>AI Insights</b><br/><small style="opacity:.75;">Twin Falls sourcing + Stripe revenue tips</small></div>
-        <button type="button" id="stAiClose" style="border:1px solid rgba(255,255,255,0.18); background:rgba(255,255,255,0.08); color:#fff; border-radius:10px; padding:6px 10px;">Close</button>
-      </div>
-      <div class="st-ai-body">
-        <textarea id="stAiQuestion" class="st-ai-q" placeholder="Ask: What should I buy this week in Twin Falls for quick resale?">What should I buy this week in Twin Falls for quick resale and how should I price it?</textarea>
-        <div class="st-ai-actions">
-          <button type="button" id="stAiAsk">Ask AI</button>
-          <button type="button" id="stAiCopy">Copy</button>
-        </div>
-        <div class="st-ai-loading" id="stAiLoading"><span class="st-ai-dots"><i></i><i></i><i></i></span> Thinking…</div>
-        <div class="st-ai-out" id="stAiOutput">Ask a question to get simple buying + revenue insights.</div>
-      </div>
-    </div>
-
-    <script>
-      (function(){
-        const launcher = document.getElementById("stAiLauncher");
-        const panel = document.getElementById("stAiPanel");
-        const close = document.getElementById("stAiClose");
-        const askBtn = document.getElementById("stAiAsk");
-        const copyBtn = document.getElementById("stAiCopy");
-        const qEl = document.getElementById("stAiQuestion");
-        const out = document.getElementById("stAiOutput");
-        const loading = document.getElementById("stAiLoading");
-
-        function setLoading(on){
-          loading.classList.toggle("show", !!on);
-          askBtn.disabled = !!on;
-        }
-
-        async function askAI(){
-          const question = (qEl.value || "").trim();
-          if (!question) return;
-
-          setLoading(true);
-          out.textContent = "";
-          try{
-            const res = await fetch("/.netlify/functions/ai-insights", {
-              method: "POST",
-              credentials: "include",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ question }),
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok || !data.ok){
-              out.textContent = (data && data.error) ? data.error : ("Request failed (" + res.status + ")");
-              return;
-            }
-            out.textContent = data.answer || "No answer returned.";
-          } catch (e) {
-            out.textContent = "Could not load AI insights right now.";
-          } finally {
-            setLoading(false);
-          }
-        }
-
-        launcher.addEventListener("click", () => panel.classList.add("open"));
-        close.addEventListener("click", () => panel.classList.remove("open"));
-        askBtn.addEventListener("click", askAI);
-        copyBtn.addEventListener("click", async () => {
-          const text = out.textContent || "";
-          if (!text.trim()) return;
-          try { await navigator.clipboard.writeText(text); } catch (e) {}
-        });
-      })();
-    </script>
-
-
-
-    <style>
-      .st-sourcing-launcher{
-        position: fixed;
-        left: 16px;
-        top: 64px;
-        z-index: 99998;
-        padding: 10px 12px;
-        border-radius: 999px;
-        border: 1px solid rgba(0,0,0,0.12);
-        background: #0f172a;
-        color: #fff;
-        font: 700 12px/1 system-ui, sans-serif;
-        cursor: pointer;
-      }
-      .st-sourcing-panel{
-        position: fixed;
-        right: 16px;
-        top: 56px;
-        width: min(560px, calc(100vw - 32px));
-        max-height: calc(100vh - 72px);
-        overflow: auto;
-        background: rgba(255,255,255,0.98);
-        border: 1px solid rgba(0,0,0,0.12);
-        border-radius: 14px;
-        box-shadow: 0 16px 38px rgba(0,0,0,0.2);
-        z-index: 99998;
-        display: none;
-      }
-      .st-sourcing-panel.open{ display:block; }
-      .st-sourcing-head{
-        position: sticky; top: 0; background: #fff; z-index: 2;
-        display:flex; justify-content:space-between; align-items:center;
-        padding:10px 12px; border-bottom:1px solid rgba(0,0,0,.08);
-      }
-      .st-sourcing-body{ padding: 10px 12px 14px; }
-      .st-opp-card,.st-draft-card{ border:1px solid rgba(0,0,0,.1); border-radius:12px; padding:10px; margin-bottom:10px; }
-      .st-opp-card h4,.st-draft-card h4{ margin:0 0 6px; font-size:14px; }
-      .st-chip{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; border:1px solid rgba(0,0,0,.12); margin-right:6px; }
-      .st-opp-actions{ display:flex; gap:8px; margin-top:8px; }
-      .st-opp-actions button{ border-radius:8px; border:1px solid rgba(0,0,0,.16); padding:6px 10px; cursor:pointer; font:600 12px/1 system-ui,sans-serif; }
-      .st-opp-actions .accept{ background:#111827; color:#fff; }
-      .st-opp-actions .decline{ background:#fff; }
-      .st-mini-muted{ opacity:.75; font-size:12px; margin:4px 0; }
-    </style>
-
-    <button id="stSourcingLauncher" class="st-sourcing-launcher" type="button">AI Sourcing</button>
-    <section id="stSourcingPanel" class="st-sourcing-panel" aria-label="AI Sourcing (Clothes and Shoes)">
-      <div class="st-sourcing-head">
-        <strong>AI Sourcing (Clothes & Shoes)</strong>
-        <button id="stSourcingClose" type="button">Close</button>
-      </div>
-      <div class="st-sourcing-body">
-        <p class="st-mini-muted">Always shows 3 AI opportunities. Accept adds to AI Draft Products.</p>
-        <div id="stSourcingStatus" class="st-mini-muted"></div>
-        <div id="stOpportunities"></div>
-        <hr />
-        <h3 style="margin:10px 0 8px;font-size:14px;">Draft Products (AI)</h3>
-        <div id="stDraftProducts"></div>
-      </div>
-    </section>
-
-    <script>
-      (function(){
-        const launcher = document.getElementById('stSourcingLauncher');
-        const panel = document.getElementById('stSourcingPanel');
-        const closeBtn = document.getElementById('stSourcingClose');
-        const statusEl = document.getElementById('stSourcingStatus');
-        const oppEl = document.getElementById('stOpportunities');
-        const draftEl = document.getElementById('stDraftProducts');
-
-        function setStatus(msg){ statusEl.textContent = msg || ''; }
-
-        async function api(url, options){
+        async function api(url, opts){
           const res = await fetch(url, {
-            ...(options || {}),
             credentials: 'include',
-            headers: {
-              'Content-Type': 'application/json',
-              ...((options && options.headers) || {}),
-            },
+            headers: { 'Content-Type':'application/json', ...((opts&&opts.headers)||{}) },
+            ...(opts||{})
           });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok || data.ok === false) throw new Error(data.error || ('Request failed (' + res.status + ')'));
+          const data = await res.json().catch(()=>({}));
+          if (!res.ok || data.ok === false) throw new Error(data.error || `Request failed (${res.status})`);
           return data;
         }
 
-        function escapeHtml(value){
-          return String(value || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        function setTab(tab){
+          state.activeTab = tab;
+          $$('.tab-btn').forEach((b)=>b.classList.toggle('active', b.getAttribute('data-tab')===tab));
+          $$('.panel').forEach((p)=>p.classList.remove('active'));
+          $('#tab-'+tab).classList.add('active');
         }
 
-        function renderOpportunities(opps){
-          const list = Array.isArray(opps) ? opps.slice(0,3) : [];
-          oppEl.innerHTML = list.map(function(o){
-            const keywords = (o.search_keywords || []).map(escapeHtml).join(', ');
-            const checklist = (o.checklist || []).map(function(item){ return '<li>' + escapeHtml(item) + '</li>'; }).join('');
-            return '<article class="st-opp-card" data-opp-id="' + escapeHtml(o.opp_id) + '">'
-              + '<h4>' + escapeHtml(o.title) + '</h4>'
-              + '<div><span class="st-chip">' + escapeHtml(o.category) + '</span><span class="st-chip">Max buy $' + Number(o.max_buy_price || 0).toFixed(2) + '</span><span class="st-chip">Sell $' + Number(o.suggested_price || 0).toFixed(2) + '</span><span class="st-chip">Margin ' + escapeHtml(o.margin_estimate || '') + '</span></div>'
-              + '<div class="st-mini-muted"><strong>Keywords:</strong> ' + keywords + '</div>'
-              + '<div class="st-mini-muted"><strong>Checklist:</strong><ul>' + checklist + '</ul></div>'
-              + '<div class="st-opp-actions"><button class="accept" type="button" data-action="accept">Accept</button><button class="decline" type="button" data-action="decline">Decline</button></div>'
-              + '</article>';
+        async function loadAi(){
+          setStatus('Loading AI sourcing…');
+          const [oppData, draftData] = await Promise.all([
+            api('/.netlify/functions/ai-opportunities'),
+            api('/.netlify/functions/draft-products')
+          ]);
+          state.drafts = Array.isArray(draftData.drafts) ? draftData.drafts : [];
+          renderOpps(oppData.opportunities || []);
+          renderDrafts(state.drafts);
+          setStatus('Loaded AI opportunities + drafts.');
+        }
+
+        function renderOpps(items){
+          const el = $('#aiOpportunities');
+          const list = Array.isArray(items) ? items : [];
+          if (!list.length) { el.innerHTML = '<div class="muted">No opportunities available.</div>'; return; }
+          el.innerHTML = list.map((o)=>`
+            <article class="opp" data-id="${esc(o.opp_id)}">
+              <h4>${esc(o.title)}</h4>
+              <div class="row"><span class="pill">${esc(o.category||'clothes')}</span><span class="muted">Margin ${esc(o.margin_estimate||'')}</span></div>
+              <div class="muted">Buy max: ${money(o.max_buy_price)} · Suggested: ${money(o.suggested_price)}</div>
+              <div class="muted">Keywords: ${esc((o.search_keywords||[]).join(', '))}</div>
+              <pre class="muted">Checklist: ${(o.checklist||[]).map(esc).join('; ')}</pre>
+              <div class="row">
+                <button class="btn" data-action="accept" type="button">Accept</button>
+                <button class="btn ghost" data-action="decline" type="button">Decline</button>
+              </div>
+            </article>
+          `).join('');
+
+          el.querySelectorAll('button[data-action]').forEach((btn)=>btn.addEventListener('click', async ()=>{
+            const card = btn.closest('[data-id]');
+            const opp_id = card ? card.getAttribute('data-id') : '';
+            if (!opp_id) return;
+            btn.disabled = true;
+            try{
+              if (btn.getAttribute('data-action')==='accept') {
+                const data = await api('/.netlify/functions/ai-accept', { method:'POST', body: JSON.stringify({ opp_id }) });
+                renderOpps(data.opportunities || []);
+                await loadDraftsOnly();
+                setStatus('Accepted opportunity and created draft product.');
+              } else {
+                const data = await api('/.netlify/functions/ai-decline', { method:'POST', body: JSON.stringify({ opp_id }) });
+                renderOpps(data.opportunities || []);
+                setStatus('Declined opportunity and refreshed back to 3.');
+              }
+            } catch (e) { setStatus(e.message||'Action failed', true); }
+            finally { btn.disabled = false; }
+          }));
+        }
+
+        async function loadDraftsOnly(){
+          const draftData = await api('/.netlify/functions/draft-products');
+          state.drafts = Array.isArray(draftData.drafts) ? draftData.drafts : [];
+          renderDrafts(state.drafts);
+        }
+
+        function renderDrafts(items){
+          const el = $('#aiDrafts');
+          const list = Array.isArray(items) ? items : [];
+          if (!list.length) { el.innerHTML = '<div class="muted">No AI draft products yet.</div>'; return; }
+          el.innerHTML = list.map((d)=>{
+            const inv = Number.isInteger(Number(d.inventory)) ? Number(d.inventory) : 0;
+            return `<article class="card" data-id="${esc(d.id)}">
+              <h4>${esc(d.title)} ${inv<=0?'<span class="pill danger">Sold out</span>':''}</h4>
+              <div class="muted">Status: ${esc(d.status)} · Price: ${money(d.price)}</div>
+              <div class="row">
+                <label>Inventory <input type="number" min="0" step="1" value="${inv}" data-field="inventory" /></label>
+                <button class="btn" data-save type="button">Save</button>
+              </div>
+            </article>`;
           }).join('');
 
-          if (!list.length) oppEl.innerHTML = '<div class="st-mini-muted">No opportunities available.</div>';
+          el.querySelectorAll('button[data-save]').forEach((btn)=>btn.addEventListener('click', async ()=>{
+            const card = btn.closest('[data-id]');
+            const id = card ? card.getAttribute('data-id') : '';
+            const inv = Number(card.querySelector('[data-field="inventory"]').value || 0);
+            if (!Number.isInteger(inv) || inv < 0) { setStatus('Inventory must be an integer >= 0.', true); return; }
+            btn.disabled = true;
+            try {
+              await api('/.netlify/functions/draft-products', { method:'PATCH', body: JSON.stringify({ id, updates:{ inventory: inv } }) });
+              await loadDraftsOnly();
+              setStatus('Draft inventory updated.');
+            } catch (e) { setStatus(e.message||'Failed to update draft', true); }
+            finally { btn.disabled = false; }
+          }));
+        }
 
-          oppEl.querySelectorAll('button[data-action]').forEach(function(btn){
-            btn.addEventListener('click', async function(){
-              const card = btn.closest('[data-opp-id]');
-              const oppId = card ? card.getAttribute('data-opp-id') : '';
-              const action = btn.getAttribute('data-action');
-              if (!oppId) return;
-              btn.disabled = true;
-              try {
-                if (action === 'decline') {
-                  const data = await api('/.netlify/functions/ai-decline', { method:'POST', body: JSON.stringify({ opp_id: oppId }) });
-                  renderOpportunities(data.opportunities || []);
-                  setStatus('Declined. Queue refreshed to 3 opportunities.');
-                } else {
-                  const data = await api('/.netlify/functions/ai-accept', { method:'POST', body: JSON.stringify({ opp_id: oppId }) });
-                  renderOpportunities(data.opportunities || []);
-                  await loadDrafts();
-                  setStatus('Accepted and saved to AI Draft Products.');
+        async function loadProducts(){
+          setStatus('Loading products…');
+          const data = await api('/.netlify/functions/admin-products');
+          state.products = Array.isArray(data.products) ? data.products : [];
+          renderProducts(state.products);
+          setStatus('Loaded products.');
+        }
+
+        function renderProducts(items){
+          const el = $('#productsList');
+          if (!items.length){ el.innerHTML = '<div class="muted">No products found.</div>'; return; }
+          el.innerHTML = items.map((p)=>{
+            const inv = Number.isInteger(Number(p.inventory)) ? Number(p.inventory) : 0;
+            return `<article class="card" data-id="${esc(p.id)}">
+              <div class="row" style="justify-content:space-between;">
+                <strong>${esc(p.id)}</strong>
+                ${inv<=0?'<span class="pill danger">Sold out</span>':''}
+              </div>
+              <div class="field"><label>Title</label><input data-field="title" value="${esc(p.title)}" /></div>
+              <div class="split">
+                <div class="field"><label>Price</label><input data-field="price" type="number" step="0.01" min="0" value="${Number(p.price||0).toFixed(2)}" /></div>
+                <div class="field"><label>Inventory</label><input data-field="inventory" type="number" step="1" min="0" value="${inv}" /></div>
+              </div>
+              <div class="field"><label>Status</label><select data-field="status"><option value="draft" ${p.status==='draft'?'selected':''}>draft</option><option value="active" ${p.status==='active'?'selected':''}>active</option><option value="archived" ${p.status==='archived'?'selected':''}>archived</option></select></div>
+              <div class="field"><label>Description</label><textarea data-field="description">${esc(p.description||'')}</textarea></div>
+              <button class="btn" data-save type="button">Save</button>
+            </article>`;
+          }).join('');
+
+          el.querySelectorAll('button[data-save]').forEach((btn)=>btn.addEventListener('click', async ()=>{
+            const card = btn.closest('[data-id]');
+            const id = card.getAttribute('data-id');
+            const inventory = Number(card.querySelector('[data-field="inventory"]').value || 0);
+            const price = Number(card.querySelector('[data-field="price"]').value || 0);
+            if (!Number.isInteger(inventory) || inventory < 0) { setStatus('Inventory must be integer >= 0.', true); return; }
+            if (!Number.isFinite(price) || price < 0) { setStatus('Price must be >= 0.', true); return; }
+            btn.disabled = true;
+            try {
+              await api('/.netlify/functions/admin-products', { method:'PATCH', body: JSON.stringify({
+                id,
+                updates: {
+                  title: card.querySelector('[data-field="title"]').value || '',
+                  description: card.querySelector('[data-field="description"]').value || '',
+                  status: card.querySelector('[data-field="status"]').value || 'draft',
+                  inventory,
+                  price,
                 }
-              } catch (e) {
-                setStatus(e.message || 'Action failed.');
-              } finally {
-                btn.disabled = false;
-              }
-            });
+              }) });
+              await loadProducts();
+              setStatus(`Saved ${id}.`);
+            } catch (e) { setStatus(e.message||'Save failed', true); }
+            finally { btn.disabled = false; }
+          }));
+        }
+
+        async function loadOrders(){
+          setStatus('Loading orders…');
+          const params = new URLSearchParams({
+            limit: '50',
+            status: $('#orderStatus').value || 'unshipped',
+            q: ($('#orderSearch').value || '').trim(),
           });
+          const data = await api('/.netlify/functions/stripe-orders?' + params.toString());
+          renderOrders(data.orders || []);
+          setStatus(`Loaded ${Array.isArray(data.orders) ? data.orders.length : 0} orders.`);
         }
 
-        function renderDrafts(drafts){
-          const list = Array.isArray(drafts) ? drafts : [];
-          draftEl.innerHTML = list.length ? list.map(function(d){
-            const inventory = Number.isInteger(Number(d.inventory)) ? Math.max(0, Number(d.inventory)) : 0;
-            const soldOutLabel = inventory <= 0 ? ' <span class="st-chip" style="border-color:#fca5a5;color:#991b1b;">Sold out</span>' : '';
-            return '<article class="st-draft-card" data-draft-id="' + escapeHtml(d.id) + '">'
-              + '<h4>' + escapeHtml(d.title) + soldOutLabel + '</h4>'
-              + '<div class="st-mini-muted">Status: ' + escapeHtml(d.status) + ' · Price: $' + Number(d.price || 0).toFixed(2) + '</div>'
-              + '<div class="st-mini-muted">Max buy: $' + Number(d.buy_price_max || 0).toFixed(2) + '</div>'
-              + '<div class="st-mini-muted">Keywords: ' + escapeHtml((d.search_keywords || []).join(', ')) + '</div>'
-              + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">'
-              + '<label class="st-mini-muted" style="margin:0;">Inventory <input type="number" min="0" step="1" value="' + inventory + '" data-draft-inventory="' + escapeHtml(d.id) + '" style="width:90px;margin-left:6px;" /></label>'
-              + '<button type="button" data-draft-save="' + escapeHtml(d.id) + '">Save</button>'
-              + '</div>'
-            + '</article>';
-          }).join('') : '<div class="st-mini-muted">No AI draft products yet.</div>';
-
-          draftEl.querySelectorAll('button[data-draft-save]').forEach(function(btn){
-            btn.addEventListener('click', async function(){
-              const id = btn.getAttribute('data-draft-save') || '';
-              const invInput = draftEl.querySelector('input[data-draft-inventory="' + id + '"]');
-              const inv = invInput ? Number(invInput.value) : 0;
-              if (!Number.isInteger(inv) || inv < 0) {
-                setStatus('Inventory must be an integer >= 0.');
-                return;
-              }
-
-              btn.disabled = true;
-              try {
-                await api('/.netlify/functions/draft-products', {
-                  method: 'PATCH',
-                  body: JSON.stringify({ id: id, updates: { inventory: inv } }),
-                });
-                setStatus('Draft inventory saved.');
-                await loadDrafts();
-              } catch (e) {
-                setStatus(e.message || 'Failed to save draft.');
-              } finally {
-                btn.disabled = false;
-              }
-            });
-          });
+        function printPackingSlip(order){
+          const rec = order.recipient || {};
+          const items = (order.items || []).map((i)=>`${i.quantity || 1} x ${i.name || 'Item'}`).join('\n');
+          const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;padding:24px;">
+            <h2>Packing Slip</h2>
+            <div><b>Order:</b> ${esc(order.id || '')}</div>
+            <div><b>Date:</b> ${new Date((order.created || 0)*1000).toLocaleString()}</div>
+            <hr/>
+            <h3>Ship To</h3>
+            <div>${esc(rec.name||'')}</div><div>${esc(rec.line1||'')}</div><div>${esc(rec.line2||'')}</div>
+            <div>${esc((rec.city||'') + ', ' + (rec.state||'') + ' ' + (rec.zip||''))}</div><div>${esc(rec.country||'')}</div>
+            <hr/>
+            <h3>Items</h3>
+            <pre>${esc(items)}</pre>
+            <hr/>
+            <div><b>Tracking:</b> ____________________________</div>
+          </body></html>`;
+          const w = window.open('', '_blank');
+          if (!w) return;
+          w.document.write(html);
+          w.document.close();
+          w.focus();
+          w.print();
         }
 
-        async function loadOpportunities(){
-          setStatus('Loading opportunities…');
-          const data = await api('/.netlify/functions/ai-opportunities');
-          renderOpportunities(data.opportunities || []);
-          setStatus('Loaded 3 opportunities.');
+        function renderOrders(items){
+          const el = $('#ordersList');
+          if (!items.length){ el.innerHTML = '<div class="muted">No matching orders.</div>'; return; }
+          el.innerHTML = items.map((o)=>{
+            const rec = o.recipient || {};
+            const status = String(o.fulfillment_status || '').toUpperCase();
+            const when = o.created ? new Date(o.created * 1000).toLocaleString() : '';
+            const itemsText = (o.items || []).map((it)=>`${it.quantity || 1} x ${it.name || 'Item'}`).join('\n');
+            return `<details class="card" data-id="${esc(o.id)}">
+              <summary><strong>${esc(o.id)}</strong> · ${esc(when)} · ${esc(o.customer_email||'')} · ${esc(status)}</summary>
+              <div class="split" style="margin-top:8px;">
+                <div><strong>Ship To</strong><pre>${esc([rec.name,rec.line1,rec.line2,`${rec.city||''}, ${rec.state||''} ${rec.zip||''}`,rec.country].filter(Boolean).join('\n'))}</pre></div>
+                <div><strong>Items</strong><pre>${esc(itemsText)}</pre></div>
+              </div>
+              <div class="row">
+                <input data-tracking placeholder="Tracking #" value="${esc(o.tracking||'')}" />
+                <button class="btn ghost" data-print type="button">Print packing slip</button>
+                <button class="btn ghost" data-copy type="button">Copy ship-to address</button>
+                <button class="btn" data-ship type="button">Mark shipped</button>
+              </div>
+            </details>`;
+          }).join('');
+
+          el.querySelectorAll('button[data-print]').forEach((btn)=>btn.addEventListener('click', ()=>{
+            const id = btn.closest('[data-id]').getAttribute('data-id');
+            const order = items.find((x)=>x.id===id);
+            if (order) printPackingSlip(order);
+          }));
+
+          el.querySelectorAll('button[data-copy]').forEach((btn)=>btn.addEventListener('click', async ()=>{
+            const card = btn.closest('[data-id]');
+            const id = card.getAttribute('data-id');
+            const order = items.find((x)=>x.id===id);
+            if (!order) return;
+            const r = order.recipient || {};
+            const text = [r.name,r.line1,r.line2,`${r.city||''}, ${r.state||''} ${r.zip||''}`,r.country].filter(Boolean).join('\n');
+            try { await navigator.clipboard.writeText(text); setStatus('Copied address.'); } catch (_) { setStatus('Copy failed.', true); }
+          }));
+
+          el.querySelectorAll('button[data-ship]').forEach((btn)=>btn.addEventListener('click', async ()=>{
+            const card = btn.closest('[data-id]');
+            const sessionId = card.getAttribute('data-id');
+            const tracking = card.querySelector('[data-tracking]').value || '';
+            btn.disabled = true;
+            try {
+              await api('/.netlify/functions/stripe-mark-shipped', { method:'POST', body: JSON.stringify({ sessionId, tracking }) });
+              await loadOrders();
+              setStatus('Order marked shipped.');
+            } catch (e) { setStatus(e.message||'Could not mark shipped.', true); }
+            finally { btn.disabled = false; }
+          }));
         }
 
-        async function loadDrafts(){
-          const data = await api('/.netlify/functions/draft-products');
-          renderDrafts(data.drafts || []);
-        }
-
-        async function loadAll(){
+        async function refreshActive(){
           try {
-            await loadOpportunities();
-            await loadDrafts();
-          } catch (e) {
-            setStatus(e.message || 'Failed to load AI sourcing.');
-          }
+            if (state.activeTab === 'ai') return await loadAi();
+            if (state.activeTab === 'products') return await loadProducts();
+            if (state.activeTab === 'orders') return await loadOrders();
+          } catch (e) { setStatus(e.message||'Refresh failed', true); }
         }
 
-        launcher.addEventListener('click', function(){ panel.classList.add('open'); loadAll(); });
-        closeBtn.addEventListener('click', function(){ panel.classList.remove('open'); });
-        document.addEventListener('DOMContentLoaded', loadAll);
+        $$('.tab-btn').forEach((btn)=>btn.addEventListener('click', ()=>{ setTab(btn.getAttribute('data-tab')); }));
+        $('#aiRefreshBtn').addEventListener('click', refreshActive);
+        $('#productsRefreshBtn').addEventListener('click', refreshActive);
+        $('#ordersRefreshBtn').addEventListener('click', refreshActive);
+        $('#orderStatus').addEventListener('change', ()=>{ if(state.activeTab==='orders') refreshActive(); });
+        $('#orderSearch').addEventListener('keydown', (e)=>{ if(e.key==='Enter') refreshActive(); });
+        $('#refreshAllBtn').addEventListener('click', refreshActive);
+        $('#logoutBtn').addEventListener('click', async ()=>{
+          try {
+            await api('/.netlify/functions/admin-logout', { method: 'POST' });
+            window.location.assign('/admin/login');
+          } catch (e) { setStatus(e.message || 'Logout failed', true); }
+        });
+
+        refreshActive();
       })();
     </script>
-
-
-
-<style>
-  .st-db-launcher{position:fixed;left:120px;top:64px;z-index:99998;padding:10px 12px;border-radius:999px;border:1px solid rgba(0,0,0,.12);background:#111827;color:#fff;font:700 12px/1 system-ui,sans-serif;cursor:pointer}
-  .st-db-panel{position:fixed;left:16px;top:108px;width:min(760px,calc(100vw - 32px));max-height:calc(100vh - 124px);overflow:auto;background:#fff;border:1px solid rgba(0,0,0,.12);border-radius:12px;box-shadow:0 16px 38px rgba(0,0,0,.2);z-index:99998;display:none}
-  .st-db-panel.open{display:block}
-  .st-db-pad{padding:10px 12px}
-  .st-db-card{border:1px solid rgba(0,0,0,.12);border-radius:10px;padding:8px;margin-bottom:8px}
-</style>
-<button id="stDbProductsLauncher" class="st-db-launcher" type="button">DB Products</button>
-<section id="stDbProductsPanel" class="st-db-panel">
-  <div class="st-db-pad" style="position:sticky;top:0;background:#fff;border-bottom:1px solid rgba(0,0,0,.08);display:flex;justify-content:space-between;align-items:center;">
-    <strong>Products (DB)</strong><button id="stDbProductsClose" type="button">Close</button>
-  </div>
-  <div class="st-db-pad">
-    <div id="stDbStatus" class="st-mini-muted"></div>
-    <div id="stDbProductsList"></div>
-  </div>
-</section>
-<script>
-(function(){
-  const panel=document.getElementById('stDbProductsPanel');
-  const list=document.getElementById('stDbProductsList');
-  const status=document.getElementById('stDbStatus');
-  const openBtn=document.getElementById('stDbProductsLauncher');
-  const closeBtn=document.getElementById('stDbProductsClose');
-
-  function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
-  async function api(url, opts){ const r=await fetch(url,{...(opts||{}),credentials:'include',headers:{'Content-Type':'application/json',...((opts&&opts.headers)||{})}}); const d=await r.json().catch(()=>({})); if(!r.ok||d.ok===false) throw new Error(d.error||('Request failed '+r.status)); return d; }
-  function setStatus(m){status.textContent=m||'';}
-
-  function renderProducts(products){
-    list.innerHTML=(products||[]).map((p)=>{
-      const inv=Number.isInteger(Number(p.inventory))?Number(p.inventory):0;
-      return '<article class="st-db-card" data-id="'+esc(p.id)+'">'
-      +'<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><b>'+esc(p.title)+'</b>'+(inv<=0?'<span class="st-chip" style="border-color:#fca5a5;color:#991b1b">Sold out</span>':'')+'</div>'
-      +'<div class="st-mini-muted">ID: '+esc(p.id)+'</div>'
-      +'<div style="display:grid;grid-template-columns:1fr 120px 120px;gap:8px;margin-top:6px;">'
-      +'<input data-field="title" value="'+esc(p.title)+'" />'
-      +'<input data-field="price" type="number" step="0.01" min="0" value="'+Number(p.price||0).toFixed(2)+'" />'
-      +'<input data-field="inventory" type="number" min="0" step="1" value="'+inv+'" />'
-      +'</div>'
-      +'<textarea data-field="description" rows="2" style="width:100%;margin-top:6px;">'+esc(p.description||'')+'</textarea>'
-      +'<div style="display:flex;gap:8px;margin-top:6px;align-items:center;">'
-      +'<select data-field="status"><option value="draft" '+(p.status==='draft'?'selected':'')+'>draft</option><option value="active" '+(p.status==='active'?'selected':'')+'>active</option><option value="archived" '+(p.status==='archived'?'selected':'')+'>archived</option></select>'
-      +'<button data-save="'+esc(p.id)+'" type="button">Save</button>'
-      +'</div></article>';
-    }).join('') || '<div class="st-mini-muted">No products found.</div>';
-
-    list.querySelectorAll('button[data-save]').forEach((btn)=>btn.addEventListener('click', async()=>{
-      const card=btn.closest('[data-id]'); const id=btn.getAttribute('data-save');
-      const title=(card.querySelector('[data-field="title"]').value||'').trim();
-      const description=(card.querySelector('[data-field="description"]').value||'').trim();
-      const price=Number(card.querySelector('[data-field="price"]').value||0);
-      const inventory=Number(card.querySelector('[data-field="inventory"]').value||0);
-      const statusVal=card.querySelector('[data-field="status"]').value;
-      if(!Number.isInteger(inventory)||inventory<0){setStatus('Inventory must be integer >= 0');return;}
-      btn.disabled=true;
-      try{
-        await api('/.netlify/functions/admin-products',{method:'PATCH',body:JSON.stringify({id,updates:{title,description,price,status:statusVal,inventory}})});
-        setStatus('Saved '+id);
-        await loadProducts();
-      }catch(e){setStatus(e.message||'Save failed');}
-      finally{btn.disabled=false;}
-    }));
-  }
-
-  async function loadProducts(){
-    setStatus('Loading products...');
-    try{const d=await api('/.netlify/functions/admin-products'); renderProducts(d.products||[]); setStatus('Loaded products');}
-    catch(e){setStatus(e.message||'Failed to load products');}
-  }
-
-  openBtn.addEventListener('click',()=>{panel.classList.add('open'); loadProducts();});
-  closeBtn.addEventListener('click',()=>panel.classList.remove('open'));
-})();
-</script>
-
-</body>
+  </body>
 </html>
- 
