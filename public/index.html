@@ -94,7 +94,7 @@
           <div>
             <h1>Curated thrift finds and vintage pieces—new drops weekly.</h1>
             <p class="muted">
-              Ships every Saturday. Secure checkout via Stripe.
+              Ships nationwide every Saturday. Secure checkout via Stripe.
             </p>
             <div class="hero-ctas">
               <a class="btn" href="#products">Shop Products</a>
@@ -151,8 +151,21 @@
               autocomplete="off"
             />
             <select id="categorySelect" class="select">
-              <option value="all">All categories</option>
+              <option value="">All categories</option>
             </select>
+            <select id="sortSelect" class="select">
+              <option value="featured">Sort: Featured</option>
+              <option value="price-asc">Price: Low to high</option>
+              <option value="price-desc">Price: High to low</option>
+              <option value="name-asc">Name: A-Z</option>
+            </select>
+          </div>
+
+          <div class="quick-filters" aria-label="Quick filters">
+            <button class="chip is-active" data-filter="all" type="button">All</button>
+            <button class="chip" data-filter="in-stock" type="button">In stock</button>
+            <button class="chip" data-filter="ready-ship" type="button">Ready to ship</button>
+            <button class="chip" data-filter="under-50" type="button">Under $50</button>
           </div>
         </div>
 
@@ -183,7 +196,7 @@
           <div>
             <h2>Contact</h2>
             <p class="muted">
-              Have a question about a product, custom order, or pickup? Send a quick message.
+              Have a question about a product, shipping speed, or custom order? Send a quick message.
             </p>
             <div class="contact-notes">
               <div class="note">
@@ -191,8 +204,8 @@
                 <div class="muted small">We typically reply within 24 hours.</div>
               </div>
               <div class="note">
-                <div class="note-title">Local pickup</div>
-                <div class="muted small">Twin Falls pickup can be arranged on request.</div>
+                <div class="note-title">Shipping first</div>
+                <div class="muted small">Most orders are shipped nationwide with tracking.</div>
               </div>
             </div>
           </div>
@@ -247,6 +260,6 @@
         <div class="muted small">Powered by Netlify + Stripe</div>
       </div>
     </footer>
-    <script src="/assets/js/secret-admin.js" defer></script>
+    
 </body>
 </html>

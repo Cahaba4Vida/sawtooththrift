@@ -98,6 +98,25 @@ function formatPrice(n, currency) {
     }
   }
 
+  async function loadCatalog() {
+    const endpoints = ["/.netlify/functions/products", "/data/products.json"];
+    let lastError = null;
+
+    for (const endpoint of endpoints) {
+      try {
+        const res = await fetch(endpoint, { cache: "no-store" });
+        if (!res.ok) throw new Error(`Failed to load products from ${endpoint}`);
+        const data = await res.json();
+        if (data && data.ok === false) throw new Error(data.error || "Catalog API error");
+        return data;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    throw lastError || new Error("Failed to load catalog");
+  }
+
   async function init() {
     const id = qp("id");
     if (!id) {
@@ -106,9 +125,7 @@ function formatPrice(n, currency) {
     }
 
     try {
-      const res = await fetch("/data/products.json", { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to load products");
-      const data = await res.json();
+      const data = await loadCatalog();
 
       const currency = data.currency || "USD";
       const products = Array.isArray(data.products) ? data.products : [];
@@ -123,6 +140,9 @@ function formatPrice(n, currency) {
 
       const qty = Number.isFinite(Number(p.quantity ?? p.qty)) ? Number(p.quantity ?? p.qty) : null;
       const isSoldOut = (qty !== null && qty <= 0) || p.status === "sold" || p.status === "inactive";
+      const buyLink = p.stripe_payment_link || "#";
+      const itemName = p.name || "this item";
+      const askSms = `sms:+12082808976?&body=${encodeURIComponent(`Hi! I'm interested in ${itemName}. Is it still available?`)}`;
 
       document.title = p.name ? `${p.name} | Sawtooth Thrift` : "Product";
 
@@ -171,10 +191,17 @@ ${(p.condition || p.size || p.dimensions || qty !== null) ? `
             </div>
 
             <div class="detail-actions">
-              ${isSoldOut ? `<span class="btn" style="opacity:0.55;pointer-events:none;">Sold Out</span>` : `${((Number.isFinite(Number(p.quantity ?? p.qty)) && Number(p.quantity ?? p.qty) <= 0) || p.status === "sold" || p.status === "inactive") ? `<span class="btn" style="opacity:0.55;cursor:not-allowed;">Sold Out</span>` : `<a class="btn" href="${p.stripe_payment_link || "#"}" target="_blank" rel="noopener">Buy Now</a>`}`}
-              <a class="btn btn-ghost" href="/#contact">Ask a question</a>
+              ${isSoldOut ? `<span class="btn" style="opacity:0.55;pointer-events:none;">Sold Out</span>` : `<a class="btn" href="${buyLink}" target="_blank" rel="noopener">Buy Now</a>`}
+              <a class="btn btn-ghost" href="${askSms}">Text us</a>
             </div>
           </div>
+        </div>
+        <div class="mobile-buybar">
+          <div>
+            <div class="muted small">${p.name || "Item"}</div>
+            <div class="price">${formatPrice(p.price, currency)}</div>
+          </div>
+          ${isSoldOut ? `<span class="btn" style="opacity:0.55;pointer-events:none;">Sold Out</span>` : `<a class="btn" href="${buyLink}" target="_blank" rel="noopener">Buy Now</a>`}
         </div>
       `;
 

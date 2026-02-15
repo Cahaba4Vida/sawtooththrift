@@ -35,8 +35,8 @@ collections:
               - { label: "Condition", name: "condition", widget: "select", options: ["New", "Like New", "Good", "Fair"], required: false }
               - { label: "Size", name: "size", widget: "string", required: false, hint: "Clothing size or general size label (e.g., M, Large)." }
               - { label: "Dimensions", name: "dimensions", widget: "string", required: false, hint: "For home goods/furniture (e.g., 24x18 in)." }
-              - { label: "Pickup Only", name: "pickup_only", widget: "boolean", default: false, required: false, hint: "Enable if this item is pickup-only (no shipping)." }
-              - { label: "Pickup Note", name: "pickup_note", widget: "string", required: false, hint: "Example: Twin Falls pickup only—message to arrange." }
+              - { label: "Pickup Only", name: "pickup_only", widget: "boolean", default: false, required: false, hint: "Use only for rare local exceptions. Default is shipped orders." }
+              - { label: "Pickup Note", name: "pickup_note", widget: "string", required: false, hint: "Example: Local handoff details only when not shipping." }
               - { label: "Shipping Note", name: "shipping_note", widget: "string", required: false, hint: "Example: $6 flat rate, free shipping over $50, etc." }
               - { label: "Short Description", name: "description_short", widget: "text", required: false }
               - { label: "Long Description", name: "description_long", widget: "text", required: false }
