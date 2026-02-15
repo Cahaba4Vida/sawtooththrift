@@ -1,16 +1,3 @@
-backend:
-  name: git-gateway
-  branch: main
-
-media_folder: "assets/uploads"
-public_folder: "/assets/uploads"
-
-collections:
-  - name: "dummy"
-    label: "Dummy"
-    files:
-      - name: "placeholder"
-        label: "Placeholder"
-        file: "data/placeholder.json"
-        fields:
-          - { label: "Title", name: "title", widget: "string" }
+# Deprecated: Decap/Netlify CMS is removed from /admin.
+# This file is intentionally unused and kept only as a harmless placeholder.
+# Admin is fully custom and protected by ADMIN_TOKEN cookie/token checks.
