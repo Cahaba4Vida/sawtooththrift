@@ -1,4 +1,4 @@
 # Admin routes for Decap CMS
-/admin       /admin/index.html 200
-/admin/      /admin/index.html 200
-/admin/*     /admin/index.html 200
+/admin              /admin/index.html 200
+/admin/             /admin/index.html 200
+# NOTE: do not rewrite /admin/*, Decap needs /admin/config.yml to be served as YAML.
