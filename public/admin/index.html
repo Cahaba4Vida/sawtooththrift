@@ -36,6 +36,8 @@
       .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
       .pill { display:inline-block; border:1px solid rgba(255,255,255,.2); border-radius:999px; padding:2px 8px; font-size:.8rem; }
       .danger { color:#fecaca; }
+      .warning { color:#fbbf24; }
+      .hidden { display:none !important; }
       .split { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
       .products-grid { display:grid; gap:10px; }
       .field { display:grid; gap:6px; }
@@ -67,6 +69,14 @@
 
       <section class="status" id="globalStatus" aria-live="polite"></section>
 
+      <section class="card hidden" id="dbSetupCard" style="margin-bottom:12px;">
+        <h3 style="margin-top:0">Database Setup</h3>
+        <p class="warning" id="dbSetupMessage">Database not initialized.</p>
+        <div class="row">
+          <button class="btn" id="dbInitBtn" type="button">Initialize Database</button>
+        </div>
+      </section>
+
       <section class="panel active" id="tab-ai">
         <h2 style="margin-top:0">AI Sourcing (Clothes & Shoes)</h2>
         <p class="muted">Always displays exactly 3 opportunities. Accept creates draft product with default inventory=1. Decline refreshes queue immediately.</p>
@@ -90,7 +100,23 @@
         <p class="muted">Edit title, price, description, inventory, and status. Setting status=active publishes instantly.</p>
         <div class="row" style="margin-bottom:8px;">
           <button class="btn" id="productsRefreshBtn" type="button">Refresh products</button>
+          <button class="btn" id="newProductBtn" type="button">New Product</button>
         </div>
+        <section class="card hidden" id="newProductForm" style="margin-bottom:12px;">
+          <h3 style="margin-top:0">Create Product</h3>
+          <div class="field"><label>Title *</label><input id="newTitle" /></div>
+          <div class="split">
+            <div class="field"><label>Price (USD) *</label><input id="newPrice" type="number" min="0" step="0.01" /></div>
+            <div class="field"><label>Inventory</label><input id="newInventory" type="number" min="0" step="1" value="1" /></div>
+          </div>
+          <div class="field"><label>Status</label><select id="newStatus"><option value="draft" selected>draft</option><option value="active">active</option></select></div>
+          <div class="field"><label>Description</label><textarea id="newDescription"></textarea></div>
+          <div class="field"><label>Photos (one URL per line)</label><textarea id="newPhotos" placeholder="https://..."></textarea></div>
+          <div class="row">
+            <button class="btn" id="createProductBtn" type="button">Create Product</button>
+            <button class="btn ghost" id="cancelProductBtn" type="button">Cancel</button>
+          </div>
+        </section>
         <div class="products-grid" id="productsList"></div>
       </section>
 
@@ -114,21 +140,64 @@
       (function(){
         const $ = (sel) => document.querySelector(sel);
         const $$ = (sel) => Array.from(document.querySelectorAll(sel));
-        const state = { activeTab: 'ai', products: [], drafts: [] };
+        const state = { activeTab: 'ai', products: [], drafts: [], dbTables: null };
+        const REQUIRED_TABLES = ['products', 'ai_opportunities', 'processed_stripe_sessions'];
 
         function esc(s){ return String(s||'').replace(/[&<>"']/g, (c)=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
         function money(n){ const v=Number(n||0); return Number.isFinite(v) ? `$${v.toFixed(2)}` : '$0.00'; }
         function setStatus(msg, isErr){ const el=$('#globalStatus'); el.textContent=msg||''; el.style.color=isErr?'#fca5a5':'#93c5fd'; }
 
-        async function api(url, opts){
+        function friendlyError(msg){
+          const text = String(msg || 'Request failed').trim();
+          if (/relation .* does not exist/i.test(text) || /42P01/.test(text)) return 'DB tables missing. Go to Settings -> Initialize Database.';
+          if (/products|ai_opportunities|processed_stripe_sessions/i.test(text) && /does not exist/i.test(text)) return 'DB tables missing. Go to Settings -> Initialize Database.';
+          return text;
+        }
+
+        function fallbackFunctionUrl(url){
+          if (!url || !String(url).startsWith('/.netlify/functions/')) return '';
+          return String(url).replace('/.netlify/functions/', '/api/');
+        }
+
+        async function requestJson(url, opts){
           const res = await fetch(url, {
             credentials: 'include',
             headers: { 'Content-Type':'application/json', ...((opts&&opts.headers)||{}) },
             ...(opts||{})
           });
           const data = await res.json().catch(()=>({}));
-          if (!res.ok || data.ok === false) throw new Error(data.error || `Request failed (${res.status})`);
+          return { res, data };
+        }
+
+        async function api(url, opts){
+          let { res, data } = await requestJson(url, opts);
+          if (res.status === 404) {
+            const fallbackUrl = fallbackFunctionUrl(url);
+            if (fallbackUrl) {
+              ({ res, data } = await requestJson(fallbackUrl, opts));
+            }
+          }
+          if (!res.ok || data.ok === false) throw new Error(friendlyError(data.error || `Request failed (${res.status})`));
           return data;
+        }
+
+        function showDbSetup(tables){
+          const missing = REQUIRED_TABLES.filter((name)=>!tables[name]);
+          const card = $('#dbSetupCard');
+          if (!missing.length) { card.classList.add('hidden'); return; }
+          card.classList.remove('hidden');
+          $('#dbSetupMessage').textContent = `Database not initialized. Missing: ${missing.join(', ')}`;
+          setStatus('DB tables missing. Go to Settings -> Initialize Database.', true);
+        }
+
+        async function checkDbStatus(){
+          try {
+            const data = await api('/.netlify/functions/admin-db-init');
+            state.dbTables = data.tables || {};
+            showDbSetup(state.dbTables);
+          } catch (e) {
+            setStatus(e.message || 'Failed to check database status.', true);
+          }
         }
 
         function setTab(tab){
@@ -232,6 +301,15 @@
           state.products = Array.isArray(data.products) ? data.products : [];
           renderProducts(state.products);
           setStatus('Loaded products.');
+        }
+
+        function resetNewProductForm(){
+          $('#newTitle').value = '';
+          $('#newPrice').value = '';
+          $('#newInventory').value = '1';
+          $('#newStatus').value = 'draft';
+          $('#newDescription').value = '';
+          $('#newPhotos').value = '';
         }
 
         function renderProducts(items){
@@ -386,6 +464,60 @@
         $('#orderStatus').addEventListener('change', ()=>{ if(state.activeTab==='orders') refreshActive(); });
         $('#orderSearch').addEventListener('keydown', (e)=>{ if(e.key==='Enter') refreshActive(); });
         $('#refreshAllBtn').addEventListener('click', refreshActive);
+        $('#newProductBtn').addEventListener('click', ()=>{
+          $('#newProductForm').classList.remove('hidden');
+        });
+
+        $('#cancelProductBtn').addEventListener('click', ()=>{
+          $('#newProductForm').classList.add('hidden');
+          resetNewProductForm();
+        });
+
+        $('#createProductBtn').addEventListener('click', async ()=>{
+          const btn = $('#createProductBtn');
+          const title = $('#newTitle').value.trim();
+          const price = Number($('#newPrice').value || 0);
+          const inventory = Number($('#newInventory').value || 1);
+          const status = $('#newStatus').value || 'draft';
+          const description = $('#newDescription').value || '';
+          const photos = $('#newPhotos').value.split(/\n/).map((x)=>x.trim()).filter(Boolean);
+
+          if (!title) { setStatus('Title is required.', true); return; }
+          if (!Number.isFinite(price) || price < 0) { setStatus('Price must be >= 0.', true); return; }
+          if (!Number.isInteger(inventory) || inventory < 0) { setStatus('Inventory must be integer >= 0.', true); return; }
+
+          btn.disabled = true;
+          try {
+            await api('/.netlify/functions/admin-products', {
+              method: 'POST',
+              body: JSON.stringify({ title, price, inventory, status, description, photos })
+            });
+            await loadProducts();
+            $('#newProductForm').classList.add('hidden');
+            resetNewProductForm();
+            setStatus('Product created.');
+          } catch (e) {
+            setStatus(e.message || 'Failed to create product.', true);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+
+        $('#dbInitBtn').addEventListener('click', async ()=>{
+          const btn = $('#dbInitBtn');
+          btn.disabled = true;
+          try {
+            await api('/.netlify/functions/admin-db-init', { method:'POST' });
+            await checkDbStatus();
+            await Promise.all([loadAi(), loadProducts()]);
+            setStatus('Database initialized successfully.');
+          } catch (e) {
+            setStatus(e.message || 'Database initialization failed.', true);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+
         $('#logoutBtn').addEventListener('click', async ()=>{
           try {
             await api('/.netlify/functions/admin-logout', { method: 'POST' });
@@ -393,6 +525,7 @@
           } catch (e) { setStatus(e.message || 'Logout failed', true); }
         });
 
+        checkDbStatus();
         refreshActive();
       })();
     </script>
