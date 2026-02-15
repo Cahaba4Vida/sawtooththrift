@@ -103,6 +103,7 @@
       <section class="panel" id="tab-products">
         <h2 style="margin-top:0">DB Products</h2>
         <p class="muted">Edit title, price, description, inventory, and status. Setting status=active publishes instantly.</p>
+        <p class="muted warning">Archiving removes stored photos to save space.</p>
         <div class="row" style="margin-bottom:8px;">
           <button class="btn" id="productsRefreshBtn" type="button">Refresh products</button>
           <button class="btn" id="newProductBtn" type="button">New Product</button>
@@ -343,6 +344,10 @@
             const card = btn.closest('[data-id]');
             const id = card.getAttribute('data-id');
             const nextStatus = btn.getAttribute('data-archive-status') || 'archived';
+            if (nextStatus === 'archived') {
+              const confirmed = window.confirm('Archiving removes stored photos to save space. Continue?');
+              if (!confirmed) return;
+            }
             btn.disabled = true;
             try {
               await api('/.netlify/functions/admin-products', { method:'PATCH', body: JSON.stringify({ id, updates:{ status: nextStatus } }) });
@@ -427,6 +432,9 @@
             const archiveLabel = status === 'archived' ? 'Restore' : 'Archive';
             const archiveStatus = status === 'archived' ? 'draft' : 'archived';
             const photosText = Array.isArray(p.photos) ? p.photos.join('\n') : '';
+            const photosField = status === 'archived'
+              ? '<div class="muted">Photo upload is disabled for archived products.</div>'
+              : `<div class="field"><label>Photos (one URL per line)</label><textarea data-field="photos">${esc(photosText)}</textarea></div>`;
             return `<details class="card" data-id="${esc(p.id)}">
               <summary class="product-summary">
                 <div class="product-headline">
@@ -448,7 +456,7 @@
               </div>
               <div class="field"><label>Status</label><select data-field="status"><option value="draft" ${p.status==='draft'?'selected':''}>draft</option><option value="active" ${p.status==='active'?'selected':''}>active</option><option value="archived" ${p.status==='archived'?'selected':''}>archived</option></select></div>
               <div class="field"><label>Description</label><textarea data-field="description">${esc(p.description||'')}</textarea></div>
-              <div class="field"><label>Photos (one URL per line)</label><textarea data-field="photos">${esc(photosText)}</textarea></div>
+              ${photosField}
               <button class="btn" data-save type="button">Save</button>
             </details>`;
           }).join('');
@@ -475,6 +483,10 @@
             const card = btn.closest('[data-id]');
             const id = card.getAttribute('data-id');
             const nextStatus = btn.getAttribute('data-archive-status') || 'archived';
+            if (nextStatus === 'archived') {
+              const confirmed = window.confirm('Archiving removes stored photos to save space. Continue?');
+              if (!confirmed) return;
+            }
             btn.disabled = true;
             try {
               await api('/.netlify/functions/admin-products', { method:'PATCH', body: JSON.stringify({ id, updates:{ status: nextStatus } }) });
@@ -489,7 +501,8 @@
             const id = card.getAttribute('data-id');
             const inventory = Number(card.querySelector('[data-field="inventory"]').value || 0);
             const price = Number(card.querySelector('[data-field="price"]').value || 0);
-            const photos = card.querySelector('[data-field="photos"]').value.split(/\n/).map((x)=>x.trim()).filter(Boolean);
+            const photosField = card.querySelector('[data-field="photos"]');
+            const photos = photosField ? photosField.value.split(/\n/).map((x)=>x.trim()).filter(Boolean) : [];
             if (!Number.isInteger(inventory) || inventory < 0) { setStatus('Inventory must be integer >= 0.', true); return; }
             if (!Number.isFinite(price) || price < 0) { setStatus('Price must be >= 0.', true); return; }
             btn.disabled = true;
