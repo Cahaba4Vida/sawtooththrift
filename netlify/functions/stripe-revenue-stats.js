@@ -9,23 +9,38 @@ function json(statusCode, body) {
   };
 }
 
-function summarizeSessions(sessions) {
-  const list = Array.isArray(sessions) ? sessions : [];
-  const grossCents = list.reduce((sum, s) => sum + (Number.isFinite(Number(s.amount_total)) ? Number(s.amount_total) : 0), 0);
-  const orderCount = list.length;
-  const avgOrderCents = orderCount > 0 ? Math.round(grossCents / orderCount) : 0;
-  return { grossCents, orderCount, avgOrderCents };
+const DAY_SECONDS = 24 * 60 * 60;
+
+function isPaidSession(session) {
+  if (!session || session.payment_status !== 'paid') return false;
+  if (typeof session.status === 'string' && session.status !== 'complete') return false;
+  return true;
 }
 
-async function listPaidSessions(stripe, createdGteUnix) {
+function sessionAmountCents(session) {
+  return Number.isFinite(Number(session && session.amount_total)) ? Number(session.amount_total) : 0;
+}
+
+function summarizeSessions(sessions) {
+  const list = Array.isArray(sessions) ? sessions : [];
+  const revenue_cents = list.reduce((sum, s) => sum + sessionAmountCents(s), 0);
+  const orders = list.length;
+  const aov_cents = orders > 0 ? Math.round(revenue_cents / orders) : 0;
+  return { revenue_cents, orders, aov_cents };
+}
+
+function unixToDateKey(unixSeconds) {
+  return new Date(unixSeconds * 1000).toISOString().slice(0, 10);
+}
+
+async function listCheckoutSessionsSince(stripe, createdGteUnix) {
   const out = [];
   let startingAfter = null;
 
   while (true) {
     const resp = await stripe.checkout.sessions.list({
       limit: 100,
-      payment_status: 'paid',
-      ...(createdGteUnix ? { created: { gte: createdGteUnix } } : {}),
+      created: { gte: createdGteUnix },
       ...(startingAfter ? { starting_after: startingAfter } : {}),
     });
 
@@ -39,6 +54,30 @@ async function listPaidSessions(stripe, createdGteUnix) {
   return out;
 }
 
+function buildDailySeries(sessions, startUnix, endUnix) {
+  const byDate = new Map();
+
+  for (const session of sessions) {
+    if (!session || !Number.isFinite(Number(session.created))) continue;
+    const created = Number(session.created);
+    if (created < startUnix || created > endUnix) continue;
+
+    const key = unixToDateKey(created);
+    const current = byDate.get(key) || { date: key, revenue_cents: 0, orders: 0 };
+    current.revenue_cents += sessionAmountCents(session);
+    current.orders += 1;
+    byDate.set(key, current);
+  }
+
+  const daily = [];
+  for (let day = startUnix; day <= endUnix; day += DAY_SECONDS) {
+    const key = unixToDateKey(day);
+    daily.push(byDate.get(key) || { date: key, revenue_cents: 0, orders: 0 });
+  }
+
+  return daily;
+}
+
 exports.handler = async (event) => {
   try {
     try {
@@ -50,27 +89,45 @@ exports.handler = async (event) => {
     if (event.httpMethod !== 'GET') return json(405, { ok: false, error: 'Method Not Allowed' });
 
     const secretKey = process.env.STRIPE_SECRET_KEY;
-    if (!secretKey) return json(500, { ok: false, error: 'Missing STRIPE_SECRET_KEY env var.' });
+    if (!secretKey) return json(500, { ok: false, error: 'Stripe is not configured yet. Please set STRIPE_SECRET_KEY.' });
 
-    const stripe = new Stripe(secretKey);
     const now = Math.floor(Date.now() / 1000);
-    const since7d = now - (7 * 24 * 60 * 60);
-    const since30d = now - (30 * 24 * 60 * 60);
+    const start30 = now - (30 * DAY_SECONDS);
+    const start7 = now - (7 * DAY_SECONDS);
+    const start14 = now - (14 * DAY_SECONDS);
 
-    const [sessions7d, sessions30d] = await Promise.all([
-      listPaidSessions(stripe, since7d),
-      listPaidSessions(stripe, since30d),
-    ]);
+    let sessions;
+    try {
+      const stripe = new Stripe(secretKey);
+      sessions = await listCheckoutSessionsSince(stripe, start30);
+    } catch (err) {
+      return json(502, {
+        ok: false,
+        error: err && err.message ? `Stripe API error: ${err.message}` : 'Stripe API request failed.',
+      });
+    }
 
-    const stats7d = summarizeSessions(sessions7d);
-    const stats30d = summarizeSessions(sessions30d);
+    const paidSessions = sessions.filter(isPaidSession);
+    const paidLast7 = paidSessions.filter((s) => Number(s.created) >= start7);
+    const paidLast30 = paidSessions.filter((s) => Number(s.created) >= start30);
+
+    const last7 = summarizeSessions(paidLast7);
+    const last30 = summarizeSessions(paidLast30);
+    const daily = buildDailySeries(paidSessions, start14, now);
+
+    console.log(`paid_sessions=${paidLast30.length}, revenue_last30=${last30.revenue_cents}`);
 
     return json(200, {
       ok: true,
+      kpis: {
+        last7: { revenue_cents: last7.revenue_cents, orders: last7.orders },
+        last30: { revenue_cents: last30.revenue_cents, orders: last30.orders, aov_cents: last30.aov_cents },
+      },
+      daily,
       stats: {
         generated_at_unix: now,
-        window_7d: stats7d,
-        window_30d: stats30d,
+        window_7d: { grossCents: last7.revenue_cents, orderCount: last7.orders, avgOrderCents: last7.aov_cents },
+        window_30d: { grossCents: last30.revenue_cents, orderCount: last30.orders, avgOrderCents: last30.aov_cents },
       },
     });
   } catch (err) {
