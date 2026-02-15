@@ -1,3 +1,4 @@
+const { query } = require('./_db');
 const { requireAdmin, authErrorResponse } = require('./_adminAuth');
 
 function json(statusCode, body) {
@@ -14,7 +15,7 @@ function getHeader(event, name) {
   return key ? headers[key] : '';
 }
 
-function parseMultipartFile(event) {
+function parseMultipart(event) {
   const contentType = String(getHeader(event, 'content-type') || '');
   const match = contentType.match(/boundary=([^;]+)/i);
   if (!match) throw new Error('Missing multipart boundary.');
@@ -23,8 +24,11 @@ function parseMultipartFile(event) {
   const data = raw.toString('latin1');
   const parts = data.split(`--${boundary}`);
 
+  let file = null;
+  const fields = {};
+
   for (const part of parts) {
-    if (!part || part === '--' || !part.includes('name="file"')) continue;
+    if (!part || part === '--') continue;
     const clean = part.replace(/^\r\n/, '').replace(/\r\n--$/, '').replace(/\r\n$/, '');
     const splitIndex = clean.indexOf('\r\n\r\n');
     if (splitIndex < 0) continue;
@@ -32,18 +36,24 @@ function parseMultipartFile(event) {
     const headerText = clean.slice(0, splitIndex);
     const bodyText = clean.slice(splitIndex + 4);
 
+    const nameMatch = headerText.match(/name="([^"]+)"/i);
+    const fieldName = nameMatch ? nameMatch[1] : '';
     const filenameMatch = headerText.match(/filename="([^"]+)"/i);
-    const mimeMatch = headerText.match(/content-type:\s*([^\r\n]+)/i);
 
-    const filename = filenameMatch ? filenameMatch[1] : `upload-${Date.now()}.jpg`;
-    const contentTypeValue = mimeMatch ? mimeMatch[1].trim() : 'application/octet-stream';
-    const bytes = Buffer.from(bodyText, 'latin1');
-    if (!bytes.length) throw new Error('Uploaded file is empty.');
-
-    return { filename, contentType: contentTypeValue, bytes };
+    if (filenameMatch && fieldName === 'file') {
+      const mimeMatch = headerText.match(/content-type:\s*([^\r\n]+)/i);
+      const filename = filenameMatch[1] || `upload-${Date.now()}.jpg`;
+      const contentTypeValue = mimeMatch ? mimeMatch[1].trim() : 'application/octet-stream';
+      const bytes = Buffer.from(bodyText, 'latin1');
+      if (!bytes.length) throw new Error('Uploaded file is empty.');
+      file = { filename, contentType: contentTypeValue, bytes };
+    } else if (fieldName) {
+      fields[fieldName] = bodyText.trim();
+    }
   }
 
-  throw new Error('Missing file field in multipart upload.');
+  if (!file) throw new Error('Missing file field in multipart upload.');
+  return { file, fields };
 }
 
 async function uploadToCloudinary(file) {
@@ -90,9 +100,18 @@ exports.handler = async (event) => {
       return json(400, { ok: false, error: 'Content-Type must be multipart/form-data' });
     }
 
-    const file = parseMultipartFile(event);
+    const { file, fields } = parseMultipart(event);
     if (!String(file.contentType).toLowerCase().startsWith('image/')) {
       return json(400, { ok: false, error: 'Only image uploads are allowed.' });
+    }
+
+    const productId = String((event.queryStringParameters && event.queryStringParameters.product_id) || fields.product_id || '').trim();
+    if (productId) {
+      const { rows } = await query('SELECT status FROM products WHERE id=$1 LIMIT 1', [productId]);
+      if (!rows.length) return json(404, { ok: false, error: 'Product not found' });
+      if (String(rows[0].status || '').toLowerCase() === 'archived') {
+        return json(400, { ok: false, error: 'Cannot add photos to archived products' });
+      }
     }
 
     const url = await uploadToCloudinary(file);

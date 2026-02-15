@@ -79,60 +79,71 @@ exports.handler = async (event, _context) => {
 
         const fields = [];
         const values = [];
-        const push = (col, val) => { fields.push(`${col}=$${values.length + 1}`); values.push(val); };
+        const fieldIndexes = new Map();
+        const setField = (col, val) => {
+          if (fieldIndexes.has(col)) {
+            values[fieldIndexes.get(col)] = val;
+            return;
+          }
+          fieldIndexes.set(col, values.length);
+          fields.push(`${col}=$${values.length + 1}`);
+          values.push(val);
+        };
 
         let nextInventory = current.inventory;
         let inventoryProvided = false;
         let nextStatus = String(current.status || 'draft').toLowerCase();
         let statusProvided = false;
 
-        if (updates.title != null) push('title', String(updates.title).trim());
-        if (updates.description != null) push('description', String(updates.description));
-        if (updates.currency != null) push('currency', String(updates.currency).toLowerCase().trim() || 'usd');
-        if (updates.photos != null) push('photos', JSON.stringify(Array.isArray(updates.photos) ? updates.photos : []));
-        if (updates.tags != null) push('tags', JSON.stringify(Array.isArray(updates.tags) ? updates.tags : []));
-        if (updates.search_keywords != null) push('search_keywords', JSON.stringify(Array.isArray(updates.search_keywords) ? updates.search_keywords : []));
-        if (updates.source_notes != null) push('source_notes', String(updates.source_notes));
+        if (updates.title != null) setField('title', String(updates.title).trim());
+        if (updates.description != null) setField('description', String(updates.description));
+        if (updates.currency != null) setField('currency', String(updates.currency).toLowerCase().trim() || 'usd');
+        if (updates.photos != null) setField('photos', JSON.stringify(Array.isArray(updates.photos) ? updates.photos : []));
+        if (updates.tags != null) setField('tags', JSON.stringify(Array.isArray(updates.tags) ? updates.tags : []));
+        if (updates.search_keywords != null) setField('search_keywords', JSON.stringify(Array.isArray(updates.search_keywords) ? updates.search_keywords : []));
+        if (updates.source_notes != null) setField('source_notes', String(updates.source_notes));
         if (updates.buy_price_max_cents != null) {
           const v = Number(updates.buy_price_max_cents);
           if (!Number.isInteger(v) || v < 0) throw Object.assign(new Error('buy_price_max_cents must be >= 0'), { statusCode: 400 });
-          push('buy_price_max_cents', v);
+          setField('buy_price_max_cents', v);
         }
         if (updates.inventory != null) {
           const inv = Number(updates.inventory);
           if (!Number.isInteger(inv) || inv < 0) throw Object.assign(new Error('inventory must be integer >= 0'), { statusCode: 400 });
           nextInventory = inv;
           inventoryProvided = true;
-          push('inventory', inv);
+          setField('inventory', inv);
         }
         if (updates.status != null) {
           const status = String(updates.status).toLowerCase().trim();
           if (!['draft', 'active', 'archived'].includes(status)) throw Object.assign(new Error('Invalid status'), { statusCode: 400 });
           nextStatus = status;
           statusProvided = true;
-          push('status', status);
+          setField('status', status);
         }
         if (updates.price_cents != null || updates.price != null) {
           const cents = updates.price_cents != null ? Number(updates.price_cents) : Math.round(Number(updates.price) * 100);
           if (!Number.isInteger(cents) || cents < 0) throw Object.assign(new Error('price must be >= 0'), { statusCode: 400 });
-          push('price_cents', cents);
+          setField('price_cents', cents);
         }
 
         if (inventoryProvided) {
           const prevInventory = Number(current.inventory || 0);
           if (nextInventory > 0) {
-            push('sold_out_since', null);
+            setField('sold_out_since', null);
           } else if (nextInventory <= 0 && prevInventory > 0) {
-            push('sold_out_since', new Date().toISOString());
+            setField('sold_out_since', new Date().toISOString());
           }
         }
 
         if (statusProvided) {
           const prevStatus = String(current.status || '').toLowerCase();
           if (nextStatus === 'archived') {
-            push('archived_at', new Date().toISOString());
+            await client.query('DELETE FROM product_images WHERE product_id=$1', [id]);
+            setField('photos', JSON.stringify([]));
+            setField('archived_at', new Date().toISOString());
           } else if (prevStatus === 'archived' && nextStatus !== 'archived') {
-            push('archived_at', null);
+            setField('archived_at', null);
           }
         }
 
