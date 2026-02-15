@@ -1,0 +1,50 @@
+backend:
+  name: git-gateway
+  branch: main
+
+publish_mode: simple
+
+media_folder: "public/assets/img/products"
+public_folder: "/assets/img/products"
+
+slug:
+  encoding: "ascii"
+  clean_accents: true
+  sanitize_replacement: "-"
+
+collections:
+  - name: "catalog"
+    label: "Catalog"
+    files:
+      - file: "public/data/products.json"
+        label: "Products"
+        name: "products"
+        format: "json"
+        fields:
+          - { label: "Currency", name: "currency", widget: "string", default: "USD" }
+          - label: "Products"
+            name: "products"
+            widget: "list"
+            summary: "{{fields.name}} — {{fields.status}} — {{fields.price}}"
+            fields:
+              - { label: "ID", name: "id", widget: "string", hint: "Optional. If left blank, the site generates a stable ID automatically. If you set one, keep it stable once published." }
+              - { label: "Status", name: "status", widget: "select", options: ["active", "sold", "inactive"], default: "active" }
+              - { label: "Name", name: "name", widget: "string" }
+              - { label: "Price", name: "price", widget: "number", value_type: "float", min: 0 }
+              - { label: "Quantity", name: "quantity", widget: "number", value_type: "int", min: 0, default: 1, hint: "Display-only inventory. Enforce sellout via Stripe Payment Link limit." }
+              - { label: "Condition", name: "condition", widget: "select", options: ["New", "Like New", "Good", "Fair"], required: false }
+              - { label: "Size", name: "size", widget: "string", required: false, hint: "Clothing size or general size label (e.g., M, Large)." }
+              - { label: "Dimensions", name: "dimensions", widget: "string", required: false, hint: "For home goods/furniture (e.g., 24x18 in)." }
+              - { label: "Pickup Only", name: "pickup_only", widget: "boolean", default: false, required: false, hint: "Enable if this item is pickup-only (no shipping)." }
+              - { label: "Pickup Note", name: "pickup_note", widget: "string", required: false, hint: "Example: Twin Falls pickup only—message to arrange." }
+              - { label: "Shipping Note", name: "shipping_note", widget: "string", required: false, hint: "Example: $6 flat rate, free shipping over $50, etc." }
+              - { label: "Short Description", name: "description_short", widget: "text", required: false }
+              - { label: "Long Description", name: "description_long", widget: "text", required: false }
+              - { label: "Stripe Payment Link", name: "stripe_payment_link", widget: "string", required: false, hint: "Paste the Stripe Payment Link URL. Set Stripe payment limit to prevent oversells." }
+              - { label: "Main Photo", name: "image", widget: "image", required: false }
+              - label: "Gallery Photos"
+                name: "gallery"
+                widget: "list"
+                required: false
+                field: { label: "Photo", name: "image", widget: "image" }
+              - { label: "Tags", name: "tags", widget: "list", required: false }
