@@ -212,11 +212,16 @@
 
           <form
             class="card form"
-            action="https://formsubmit.co/YOUR_EMAIL@EXAMPLE.COM"
+            name="contact"
             method="POST"
+            data-netlify="true"
+            netlify-honeypot="company"
           >
+            <input type="hidden" name="form-name" value="contact" />
             <input type="hidden" name="_subject" value="New message from Sawtooth Thrift site" />
-            <input type="hidden" name="_captcha" value="false" />
+            <p class="hidden" style="display:none;">
+              <label>Company <input name="company" /></label>
+            </p>
 
             <label class="label">
               Name
@@ -258,6 +263,7 @@
         </div>
 
         <div class="muted small">Powered by zachedwardsllc.com</div>
+        <a class="btn btn-ghost" href="/admin/" aria-label="Open admin login">Admin</a>
       </div>
     </footer>
     

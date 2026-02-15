@@ -54,6 +54,12 @@
     }
   }
 
+  function isValidStripePaymentLink(url) {
+    const v = String(url || "").trim();
+    if (!v || v.includes("REPLACE_ME")) return false;
+    return /^https:\/\/buy\.stripe\.com\//i.test(v);
+  }
+
   function normalizeTags(tags) {
     if (!tags) return [];
     if (!Array.isArray(tags)) return [];
@@ -113,6 +119,7 @@
     const tagsHtml = tags.slice(0, 3).map(t => `<span class="pill">${escapeHtml(t)}</span>`).join("");
 
     const buy = p.stripe_payment_link ? String(p.stripe_payment_link) : "#";
+    const hasValidBuyLink = isValidStripePaymentLink(buy);
 
     // Image: swap on hover if hover image exists
     const imgHtml = primary
@@ -149,7 +156,9 @@
             <a class="btn btn-ghost" href="/product.html?id=${encodeURIComponent(id)}">Details</a>
             ${isSoldOut
               ? `<span class="btn" style="opacity:0.55; cursor:not-allowed;">Sold Out</span>`
-              : `<a class="btn" href="${escapeHtmlAttr(buy)}" target="_blank" rel="noopener">Buy Now</a>`}
+              : hasValidBuyLink
+                ? `<a class="btn" href="${escapeHtmlAttr(buy)}" target="_blank" rel="noopener">Buy Now</a>`
+                : `<span class="btn" style="opacity:0.55; cursor:not-allowed;">Checkout unavailable</span>`}
           </div>
 
           <div class="product-footlinks">
