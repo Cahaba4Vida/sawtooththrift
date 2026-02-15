@@ -119,7 +119,29 @@
   })();
 </script>
 
-    <script src="https://unpkg.com/decap-cms@^3/dist/decap-cms.js"></script>
+    <script>
+  (function loadDecapCms() {
+    const sources = [
+      "https://unpkg.com/decap-cms@^3/dist/decap-cms.js",
+      "https://cdn.jsdelivr.net/npm/decap-cms@^3/dist/decap-cms.js"
+    ];
+
+    function appendScript(i) {
+      if (i >= sources.length) {
+        console.error("Decap CMS failed to load from all CDNs.");
+        return;
+      }
+
+      const s = document.createElement("script");
+      s.src = sources[i];
+      s.defer = true;
+      s.onerror = function () { appendScript(i + 1); };
+      document.head.appendChild(s);
+    }
+
+    appendScript(0);
+  })();
+</script>
 
     <script>
       (function () {
