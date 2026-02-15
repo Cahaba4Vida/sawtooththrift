@@ -72,6 +72,7 @@ To enforce true inventory (prevent oversells), you would add a server-side check
 - Admin now has quick-action buttons (open storefront, new product, focus search) to speed up edits on phones.
 - Stripe Tools in admin now includes a per-product **Shipping Label** action that auto-fills from the latest paid Stripe order address (with manual prompt fallback) and copies a printable label template.
 - Stripe Tools now includes **Auto-match current** to map the open product Name to the best Stripe item and auto-fill Price + Payment Link in one click.
+- Admin now includes an **Awaiting Orders** panel to view recent paid checkouts, customer shipping details, purchased items, and one-click printable shipping labels.
 
 
 ## AI Insights (Admin)
