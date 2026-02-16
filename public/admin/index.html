@@ -127,6 +127,10 @@
             <div class="field"><label>Price (USD) *</label><input id="newPrice" type="number" min="0" step="0.01" /></div>
             <div class="field"><label>Inventory</label><input id="newInventory" type="number" min="0" step="1" value="1" /></div>
           </div>
+          <div class="split">
+            <div class="field"><label>Category</label><select id="newCategory"><option value="clothes" selected>clothes</option><option value="shoes">shoes</option><option value="furniture">furniture</option></select></div>
+            <div class="field" id="newClothingSubcategoryWrap"><label>Clothes Type</label><select id="newClothingSubcategory"><option value="mens" selected>mens</option><option value="womens">womens</option></select></div>
+          </div>
           <div class="field"><label>Status</label><select id="newStatus"><option value="draft" selected>draft</option><option value="active">active</option></select></div>
           <div class="field"><label>Description</label><textarea id="newDescription"></textarea></div>
           <div class="field"><label>Photos (optional)</label><div class="row"><button class="btn ghost" id="newTakePhotoBtn" type="button">Use camera</button><button class="btn ghost" id="newChoosePhotosBtn" type="button">Choose from library</button><input id="newCameraPhotoInput" type="file" accept="image/*" capture="environment" multiple class="hidden" /><input id="newLibraryPhotoInput" type="file" accept="image/*" multiple class="hidden" /></div><div class="muted">Use camera to take a new photo, or choose from your photo library.</div><div id="newPhotoPreviews" class="photo-preview-grid"></div></div>
@@ -176,7 +180,19 @@
       (function(){
         const $ = (sel) => document.querySelector(sel);
         const $$ = (sel) => Array.from(document.querySelectorAll(sel));
-        const state = { activeTab: 'ai', products: [], drafts: [], dbTables: null, newPhotoFiles: [], newPhotoPreviewUrls: [], photoDrafts: {} };
+        const ADMIN_DRAFT_KEY = 'sawtooth_admin_draft_cache_v1';
+        const ADMIN_DRAFT_DB = 'sawtooth_admin_draft_files';
+        const ADMIN_DRAFT_STORE = 'newProductPhotos';
+        const state = {
+          activeTab: 'ai',
+          products: [],
+          drafts: [],
+          dbTables: null,
+          newPhotoFiles: [],
+          newPhotoPreviewUrls: [],
+          photoDrafts: {},
+          productEdits: {},
+        };
         const REQUIRED_TABLES = ['products', 'product_images', 'ai_opportunities', 'processed_stripe_sessions'];
 
         function esc(s){ return String(s||'').replace(/[&<>"']/g, (c)=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
@@ -217,6 +233,113 @@
           return data;
         }
 
+        function getDraftCache(){
+          try {
+            const parsed = JSON.parse(localStorage.getItem(ADMIN_DRAFT_KEY) || '{}');
+            return parsed && typeof parsed === 'object' ? parsed : {};
+          } catch (_) {
+            return {};
+          }
+        }
+
+        function setDraftCache(next){
+          localStorage.setItem(ADMIN_DRAFT_KEY, JSON.stringify({ ...(next || {}), updatedAt: Date.now() }));
+        }
+
+        function openDraftDb(){
+          return new Promise((resolve, reject)=>{
+            const request = indexedDB.open(ADMIN_DRAFT_DB, 1);
+            request.onupgradeneeded = ()=>{
+              const db = request.result;
+              if (!db.objectStoreNames.contains(ADMIN_DRAFT_STORE)) db.createObjectStore(ADMIN_DRAFT_STORE);
+            };
+            request.onsuccess = ()=>resolve(request.result);
+            request.onerror = ()=>reject(request.error || new Error('Could not open draft cache DB.'));
+          });
+        }
+
+        async function idbSet(key, value){
+          const db = await openDraftDb();
+          return new Promise((resolve, reject)=>{
+            const tx = db.transaction(ADMIN_DRAFT_STORE, 'readwrite');
+            tx.objectStore(ADMIN_DRAFT_STORE).put(value, key);
+            tx.oncomplete = ()=>{ db.close(); resolve(); };
+            tx.onerror = ()=>{ db.close(); reject(tx.error || new Error('Draft cache write failed.')); };
+          });
+        }
+
+        async function idbGet(key){
+          const db = await openDraftDb();
+          return new Promise((resolve, reject)=>{
+            const tx = db.transaction(ADMIN_DRAFT_STORE, 'readonly');
+            const req = tx.objectStore(ADMIN_DRAFT_STORE).get(key);
+            req.onsuccess = ()=>resolve(req.result || null);
+            req.onerror = ()=>reject(req.error || new Error('Draft cache read failed.'));
+            tx.oncomplete = ()=>db.close();
+          });
+        }
+
+        async function idbDelete(key){
+          const db = await openDraftDb();
+          return new Promise((resolve, reject)=>{
+            const tx = db.transaction(ADMIN_DRAFT_STORE, 'readwrite');
+            tx.objectStore(ADMIN_DRAFT_STORE).delete(key);
+            tx.oncomplete = ()=>{ db.close(); resolve(); };
+            tx.onerror = ()=>{ db.close(); reject(tx.error || new Error('Draft cache delete failed.')); };
+          });
+        }
+
+        function persistDraftCache(){
+          const cache = getDraftCache();
+          cache.newProduct = {
+            title: $('#newTitle').value || '',
+            price: $('#newPrice').value || '',
+            inventory: $('#newInventory').value || '1',
+            status: $('#newStatus').value || 'draft',
+            category: $('#newCategory').value || 'clothes',
+            clothing_subcategory: $('#newClothingSubcategory').value || 'mens',
+            description: $('#newDescription').value || '',
+            open: !$('#newProductForm').classList.contains('hidden'),
+            photos: state.newPhotoFiles.map((entry)=>({
+              id: entry.id,
+              name: entry.file && entry.file.name || 'photo.jpg',
+              type: entry.file && entry.file.type || 'image/jpeg',
+              lastModified: entry.file && entry.file.lastModified || Date.now(),
+            })),
+          };
+          cache.productEdits = state.productEdits;
+          setDraftCache(cache);
+        }
+
+        async function restoreDraftCache(){
+          const cache = getDraftCache();
+          const np = cache.newProduct || {};
+          if (typeof np.title === 'string') $('#newTitle').value = np.title;
+          if (typeof np.price === 'string') $('#newPrice').value = np.price;
+          if (typeof np.inventory === 'string') $('#newInventory').value = np.inventory;
+          if (typeof np.status === 'string') $('#newStatus').value = np.status;
+          if (typeof np.category === 'string') $('#newCategory').value = np.category;
+          if (typeof np.clothing_subcategory === 'string') $('#newClothingSubcategory').value = np.clothing_subcategory;
+          if (typeof np.description === 'string') $('#newDescription').value = np.description;
+          toggleNewClothingSubcategory();
+          if (np.open) $('#newProductForm').classList.remove('hidden');
+
+          state.newPhotoFiles = [];
+          state.newPhotoPreviewUrls = [];
+          const photos = Array.isArray(np.photos) ? np.photos : [];
+          for (const meta of photos) {
+            try {
+              const blob = await idbGet(meta.id);
+              if (!blob) continue;
+              const file = new File([blob], meta.name || 'photo.jpg', { type: meta.type || 'image/jpeg', lastModified: meta.lastModified || Date.now() });
+              state.newPhotoFiles.push({ id: meta.id, file });
+              state.newPhotoPreviewUrls.push(URL.createObjectURL(file));
+            } catch (_) {}
+          }
+          state.productEdits = cache.productEdits && typeof cache.productEdits === 'object' ? cache.productEdits : {};
+          renderNewPhotoPreviews();
+        }
+
 
         async function uploadPhotoFile(file, productId){
           const uploadOnce = async (url)=>{
@@ -248,19 +371,27 @@
 
         function removeNewPhotoAt(index){
           const removedPreview = state.newPhotoPreviewUrls[index];
+          const removedFile = state.newPhotoFiles[index];
           if (removedPreview) URL.revokeObjectURL(removedPreview);
+          if (removedFile && removedFile.id) {
+            idbDelete(removedFile.id).catch(()=>{});
+          }
           state.newPhotoFiles.splice(index, 1);
           state.newPhotoPreviewUrls.splice(index, 1);
           renderNewPhotoPreviews();
+          persistDraftCache();
         }
 
-        function setNewPhotoFiles(fileList){
+        async function setNewPhotoFiles(fileList){
           const incoming = Array.from(fileList || []);
           for (const file of incoming) {
-            state.newPhotoFiles.push(file);
+            const id = `np_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+            state.newPhotoFiles.push({ id, file });
             state.newPhotoPreviewUrls.push(URL.createObjectURL(file));
+            await idbSet(id, file).catch(()=>{});
           }
           renderNewPhotoPreviews();
+          persistDraftCache();
         }
 
         function showDbSetup(tables){
@@ -430,6 +561,11 @@
           const data = await api('/.netlify/functions/admin-products');
           state.products = Array.isArray(data.products) ? data.products : [];
           state.photoDrafts = Object.fromEntries(state.products.map((p)=>[String(p.id), Array.isArray(p.photos) ? [...p.photos] : []]));
+          Object.keys(state.productEdits || {}).forEach((id)=>{
+            if (!state.products.find((p)=>String(p.id) === String(id))) return;
+            const draft = state.productEdits[id] || {};
+            if (Array.isArray(draft.photos)) state.photoDrafts[id] = [...draft.photos];
+          });
           renderProducts(state.products);
           setStatus('Loaded products.');
         }
@@ -439,13 +575,34 @@
           $('#newPrice').value = '';
           $('#newInventory').value = '1';
           $('#newStatus').value = 'draft';
+          $('#newCategory').value = 'clothes';
+          $('#newClothingSubcategory').value = 'mens';
+          toggleNewClothingSubcategory();
           $('#newDescription').value = '';
           $('#newCameraPhotoInput').value = '';
           $('#newLibraryPhotoInput').value = '';
           state.newPhotoPreviewUrls.forEach((u)=>URL.revokeObjectURL(u));
+          state.newPhotoFiles.forEach((f)=>{ if (f && f.id) idbDelete(f.id).catch(()=>{}); });
           state.newPhotoFiles = [];
           state.newPhotoPreviewUrls = [];
           renderNewPhotoPreviews();
+          persistDraftCache();
+        }
+
+
+        function categoryLabel(category, clothingSubcategory){
+          const c = String(category || 'clothes').toLowerCase();
+          const sub = String(clothingSubcategory || '').toLowerCase();
+          if (c === 'clothes' && (sub === 'mens' || sub === 'womens')) return `${c} (${sub})`;
+          return c;
+        }
+
+        function toggleNewClothingSubcategory(){
+          const category = String($('#newCategory').value || 'clothes').toLowerCase();
+          const wrap = $('#newClothingSubcategoryWrap');
+          if (!wrap) return;
+          wrap.classList.toggle('hidden', category !== 'clothes');
+          if (category !== 'clothes') $('#newClothingSubcategory').value = 'mens';
         }
 
         function filteredProducts(items){
@@ -501,6 +658,9 @@
                 photos.push(uploadedUrl);
               }
               state.photoDrafts[productId] = photos;
+              if (!state.productEdits[productId]) state.productEdits[productId] = {};
+              state.productEdits[productId].photos = [...photos];
+              persistDraftCache();
               renderProductPhotoManager(card, productId, status);
               setStatus('Photo upload complete.');
             } catch (err) {
@@ -537,6 +697,9 @@
             if (!Number.isInteger(idx) || idx < 0) return;
             photos.splice(idx, 1);
             state.photoDrafts[productId] = photos;
+            if (!state.productEdits[productId]) state.productEdits[productId] = {};
+            state.productEdits[productId].photos = [...photos];
+            persistDraftCache();
             renderProductPhotoManager(card, productId, status);
           }));
         }
@@ -546,8 +709,16 @@
           const list = filteredProducts(items);
           if (!list.length){ el.innerHTML = '<div class="muted">No products found.</div>'; return; }
           el.innerHTML = list.map((p)=>{
+            const draft = state.productEdits[String(p.id)] || {};
+            const title = typeof draft.title === 'string' ? draft.title : (p.title || '');
+            const priceValue = typeof draft.price === 'string' ? draft.price : Number(p.price||0).toFixed(2);
+            const inventoryValue = typeof draft.inventory === 'string' ? draft.inventory : String(Number.isInteger(Number(p.inventory)) ? Number(p.inventory) : 0);
+            const statusValue = typeof draft.status === 'string' ? draft.status : p.status;
+            const categoryValue = typeof draft.category === 'string' ? draft.category : (p.category || 'clothes');
+            const clothingSubcategoryValue = typeof draft.clothing_subcategory === 'string' ? draft.clothing_subcategory : (p.clothing_subcategory || 'mens');
+            const description = typeof draft.description === 'string' ? draft.description : (p.description || '');
             const inv = Number.isInteger(Number(p.inventory)) ? Number(p.inventory) : 0;
-            const status = String(p.status || 'draft').toLowerCase();
+            const status = String(statusValue || 'draft').toLowerCase();
             const quickStatus = status === 'active' ? 'draft' : 'active';
             const quickLabel = status === 'active' ? 'Unpublish' : 'Publish';
             const archiveLabel = status === 'archived' ? 'Restore' : 'Archive';
@@ -555,24 +726,28 @@
             return `<details class="card" data-id="${esc(p.id)}">
               <summary class="product-summary">
                 <div class="product-headline">
-                  <strong>${esc(p.title || p.id)}</strong>
+                  <strong>${esc(title || p.id)}</strong>
                   <span class="muted">(${esc(p.id)})</span>
-                  <span class="pill">${esc(status)}</span>
+                  <span class="pill">${esc(status)}</span><span class="pill">${esc(categoryLabel(categoryValue, clothingSubcategoryValue))}</span>
                   ${inv<=0?'<span class="pill danger">Sold out</span>':''}
                 </div>
                 <div class="row">
-                  <span>${money(p.price)} · Inv ${inv}</span>
+                  <span>${money(priceValue)} · Inv ${Number(inventoryValue || 0)}</span>
                   <button class="btn ghost" data-quick-status="${esc(quickStatus)}" type="button">${quickLabel}</button>
                   <button class="btn ghost" data-archive-status="${esc(archiveStatus)}" type="button">${archiveLabel}</button>
                 </div>
               </summary>
-              <div class="field"><label>Title</label><input data-field="title" value="${esc(p.title)}" /></div>
+              <div class="field"><label>Title</label><input data-field="title" value="${esc(title)}" /></div>
               <div class="split">
-                <div class="field"><label>Price</label><input data-field="price" type="number" step="0.01" min="0" value="${Number(p.price||0).toFixed(2)}" /></div>
-                <div class="field"><label>Inventory</label><input data-field="inventory" type="number" step="1" min="0" value="${inv}" /></div>
+                <div class="field"><label>Price</label><input data-field="price" type="number" step="0.01" min="0" value="${esc(priceValue)}" /></div>
+                <div class="field"><label>Inventory</label><input data-field="inventory" type="number" step="1" min="0" value="${esc(inventoryValue)}" /></div>
               </div>
-              <div class="field"><label>Status</label><select data-field="status"><option value="draft" ${p.status==='draft'?'selected':''}>draft</option><option value="active" ${p.status==='active'?'selected':''}>active</option><option value="archived" ${p.status==='archived'?'selected':''}>archived</option></select></div>
-              <div class="field"><label>Description</label><textarea data-field="description">${esc(p.description||'')}</textarea></div>
+              <div class="split">
+                <div class="field"><label>Category</label><select data-field="category"><option value="clothes" ${categoryValue==='clothes'?'selected':''}>clothes</option><option value="shoes" ${categoryValue==='shoes'?'selected':''}>shoes</option><option value="furniture" ${categoryValue==='furniture'?'selected':''}>furniture</option></select></div>
+                <div class="field ${categoryValue==='clothes'?'':'hidden'}" data-clothing-wrap><label>Clothes Type</label><select data-field="clothing_subcategory"><option value="mens" ${clothingSubcategoryValue==='mens'?'selected':''}>mens</option><option value="womens" ${clothingSubcategoryValue==='womens'?'selected':''}>womens</option></select></div>
+              </div>
+              <div class="field"><label>Status</label><select data-field="status"><option value="draft" ${statusValue==='draft'?'selected':''}>draft</option><option value="active" ${statusValue==='active'?'selected':''}>active</option><option value="archived" ${statusValue==='archived'?'selected':''}>archived</option></select></div>
+              <div class="field"><label>Description</label><textarea data-field="description">${esc(description)}</textarea></div>
               <div class="field"><label>Photos (optional)</label><div data-photo-manager></div></div>
               <button class="btn" data-save type="button">Save</button>
             </details>`;
@@ -582,6 +757,33 @@
             const id = card.getAttribute('data-id');
             const product = list.find((p)=>String(p.id) === String(id));
             renderProductPhotoManager(card, id, String(product && product.status || 'draft').toLowerCase());
+
+            const categoryInput = card.querySelector('[data-field="category"]');
+            const clothingWrap = card.querySelector('[data-clothing-wrap]');
+            if (categoryInput && clothingWrap) {
+              const toggleWrap = ()=>{
+                const c = String(categoryInput.value || 'clothes').toLowerCase();
+                clothingWrap.classList.toggle('hidden', c !== 'clothes');
+              };
+              categoryInput.addEventListener('change', toggleWrap);
+              categoryInput.addEventListener('input', toggleWrap);
+              toggleWrap();
+            }
+
+            ['title','price','inventory','status','description','category','clothing_subcategory'].forEach((field)=>{
+              const input = card.querySelector(`[data-field="${field}"]`);
+              if (!input) return;
+              input.addEventListener('input', ()=>{
+                if (!state.productEdits[id]) state.productEdits[id] = {};
+                state.productEdits[id][field] = input.value;
+                persistDraftCache();
+              });
+              input.addEventListener('change', ()=>{
+                if (!state.productEdits[id]) state.productEdits[id] = {};
+                state.productEdits[id][field] = input.value;
+                persistDraftCache();
+              });
+            });
           });
 
           el.querySelectorAll('button[data-quick-status]').forEach((btn)=>btn.addEventListener('click', async (e)=>{
@@ -593,6 +795,8 @@
             btn.disabled = true;
             try {
               await api('/.netlify/functions/admin-products', { method:'PATCH', body: JSON.stringify({ id, updates:{ status: nextStatus } }) });
+              delete state.productEdits[id];
+              persistDraftCache();
               await loadProducts();
               setStatus(nextStatus === 'active' ? 'Published.' : 'Unpublished to draft.');
             } catch (e2) { setStatus(e2.message||'Status update failed', true); }
@@ -613,6 +817,8 @@
             btn.disabled = true;
             try {
               await api('/.netlify/functions/admin-products', { method:'PATCH', body: JSON.stringify({ id, updates:{ status: nextStatus } }) });
+              delete state.productEdits[id];
+              persistDraftCache();
               await loadProducts();
               setStatus(nextStatus === 'archived' ? 'Archived product.' : 'Restored product to draft.');
             } catch (e4) { setStatus(e4.message||'Archive update failed', true); }
@@ -624,8 +830,12 @@
             const id = card.getAttribute('data-id');
             const inventory = Number(card.querySelector('[data-field="inventory"]').value || 0);
             const price = Number(card.querySelector('[data-field="price"]').value || 0);
+            const category = card.querySelector('[data-field="category"]').value || 'clothes';
+            const clothingSubcategory = card.querySelector('[data-field="clothing_subcategory"]') ? card.querySelector('[data-field="clothing_subcategory"]').value : 'mens';
             const photos = Array.isArray(state.photoDrafts[id]) ? state.photoDrafts[id] : [];
             if (!Number.isInteger(inventory) || inventory < 0) { setStatus('Inventory must be integer >= 0.', true); return; }
+            if (!['clothes','shoes','furniture'].includes(String(category).toLowerCase())) { setStatus('Category must be clothes, shoes, or furniture.', true); return; }
+            if (String(category).toLowerCase() === 'clothes' && !['mens','womens'].includes(String(clothingSubcategory).toLowerCase())) { setStatus('Clothes type must be mens or womens.', true); return; }
             if (!Number.isFinite(price) || price < 0) { setStatus('Price must be >= 0.', true); return; }
             btn.disabled = true;
             try {
@@ -635,11 +845,15 @@
                   title: card.querySelector('[data-field="title"]').value || '',
                   description: card.querySelector('[data-field="description"]').value || '',
                   status: card.querySelector('[data-field="status"]').value || 'draft',
+                  category: card.querySelector('[data-field="category"]').value || 'clothes',
+                  clothing_subcategory: (card.querySelector('[data-field="category"]').value || 'clothes') === 'clothes' ? (card.querySelector('[data-field="clothing_subcategory"]') ? card.querySelector('[data-field="clothing_subcategory"]').value : 'mens') : '',
                   inventory,
                   price,
                   photos,
                 }
               }) });
+              delete state.productEdits[id];
+              persistDraftCache();
               await loadProducts();
               setStatus(`Saved ${id}.`);
             } catch (e3) { setStatus(e3.message||'Save failed', true); }
@@ -778,6 +992,8 @@
         $('#refreshAllBtn').addEventListener('click', refreshActive);
         $('#newProductBtn').addEventListener('click', ()=>{
           $('#newProductForm').classList.remove('hidden');
+          toggleNewClothingSubcategory();
+          persistDraftCache();
         });
 
         $('#newTakePhotoBtn').addEventListener('click', ()=>{
@@ -787,6 +1003,8 @@
         $('#newChoosePhotosBtn').addEventListener('click', ()=>{
           $('#newLibraryPhotoInput').click();
         });
+
+        $('#newCategory').addEventListener('change', ()=>{ toggleNewClothingSubcategory(); persistDraftCache(); });
 
         ['#newCameraPhotoInput', '#newLibraryPhotoInput'].forEach((selector)=>{
           const input = $(selector);
@@ -814,24 +1032,28 @@
           const price = Number($('#newPrice').value || 0);
           const inventory = Number($('#newInventory').value || 1);
           const status = $('#newStatus').value || 'draft';
+          const category = $('#newCategory').value || 'clothes';
+          const clothingSubcategory = $('#newClothingSubcategory').value || 'mens';
           const description = $('#newDescription').value || '';
 
           if (!title) { setStatus('Title is required.', true); return; }
           if (!Number.isFinite(price) || price < 0) { setStatus('Price must be >= 0.', true); return; }
           if (!Number.isInteger(inventory) || inventory < 0) { setStatus('Inventory must be integer >= 0.', true); return; }
+          if (!['clothes','shoes','furniture'].includes(String(category).toLowerCase())) { setStatus('Category must be clothes, shoes, or furniture.', true); return; }
+          if (String(category).toLowerCase() === 'clothes' && !['mens','womens'].includes(String(clothingSubcategory).toLowerCase())) { setStatus('Clothes type must be mens or womens.', true); return; }
 
           btn.disabled = true;
           try {
             const created = await api('/.netlify/functions/admin-products', {
               method: 'POST',
-              body: JSON.stringify({ title, price, inventory, status, description, photos: [] })
+              body: JSON.stringify({ title, price, inventory, status, category, clothing_subcategory: String(category).toLowerCase() === 'clothes' ? clothingSubcategory : '', description, photos: [] })
             });
 
             const productId = created && created.product && created.product.id;
             const photos = [];
             if (productId) {
-              for (const file of state.newPhotoFiles) {
-                const uploadedUrl = await uploadPhotoFile(file, productId);
+              for (const entry of state.newPhotoFiles) {
+                const uploadedUrl = await uploadPhotoFile(entry.file, productId);
                 photos.push(uploadedUrl);
               }
               if (photos.length) {
@@ -876,7 +1098,13 @@
         });
 
         checkDbStatus();
-        refreshActive();
+        restoreDraftCache().finally(()=>{
+          ['#newTitle','#newPrice','#newInventory','#newStatus','#newCategory','#newClothingSubcategory','#newDescription'].forEach((selector)=>{
+            const input = $(selector);
+            ['input','change'].forEach((evt)=>input.addEventListener(evt, persistDraftCache));
+          });
+          refreshActive();
+        });
       })();
     </script>
   </body>

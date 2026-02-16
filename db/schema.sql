@@ -3,6 +3,8 @@
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY,
   status TEXT NOT NULL DEFAULT 'draft',
+  category TEXT NOT NULL DEFAULT 'clothes',
+  clothing_subcategory TEXT NOT NULL DEFAULT '',
   title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   price_cents INT NOT NULL,
@@ -18,11 +20,14 @@ CREATE TABLE IF NOT EXISTS products (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT products_status_chk CHECK (status IN ('draft','active','archived')),
+  CONSTRAINT products_category_chk CHECK (category IN ('clothes','shoes','furniture')),
+  CONSTRAINT products_clothing_subcategory_chk CHECK (clothing_subcategory IN ('', 'mens', 'womens')),
   CONSTRAINT products_inventory_chk CHECK (inventory >= 0),
   CONSTRAINT products_price_chk CHECK (price_cents >= 0)
 );
 
 CREATE INDEX IF NOT EXISTS products_status_idx ON products (status);
+CREATE INDEX IF NOT EXISTS products_category_idx ON products (category);
 CREATE INDEX IF NOT EXISTS products_created_at_idx ON products (created_at DESC);
 
 CREATE TABLE IF NOT EXISTS product_images (

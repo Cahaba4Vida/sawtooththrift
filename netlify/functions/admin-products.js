@@ -36,6 +36,24 @@ function isMissingTablesError(err) {
   return err && (err.code === '42P01' || /relation .* does not exist/i.test(String(err.message || '')));
 }
 
+
+function normalizeCategory(value) {
+  const category = String(value || 'clothes').trim().toLowerCase();
+  if (!['shoes', 'clothes', 'furniture'].includes(category)) {
+    throw Object.assign(new Error('category must be shoes, clothes, or furniture'), { statusCode: 400 });
+  }
+  return category;
+}
+
+function normalizeClothingSubcategory(value, category) {
+  const subcategory = String(value || '').trim().toLowerCase();
+  if (category !== 'clothes') return '';
+  if (!['mens', 'womens'].includes(subcategory)) {
+    throw Object.assign(new Error('clothing_subcategory must be mens or womens when category is clothes'), { statusCode: 400 });
+  }
+  return subcategory;
+}
+
 function toProduct(row) {
   return {
     ...row,
@@ -43,12 +61,17 @@ function toProduct(row) {
     photos: Array.isArray(row.photos) ? row.photos : [],
     tags: Array.isArray(row.tags) ? row.tags : [],
     search_keywords: Array.isArray(row.search_keywords) ? row.search_keywords : [],
+    category: String(row.category || 'clothes').toLowerCase(),
+    clothing_subcategory: String(row.clothing_subcategory || '').toLowerCase(),
   };
 }
 
 async function ensureProductColumns() {
   await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS sold_out_since TIMESTAMPTZ`);
   await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'clothes'`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS clothing_subcategory TEXT NOT NULL DEFAULT ''`);
+  await query(`CREATE INDEX IF NOT EXISTS products_category_idx ON products(category)`);
 }
 
 
@@ -109,6 +132,10 @@ exports.handler = async (event, _context) => {
         let inventoryProvided = false;
         let nextStatus = String(current.status || 'draft').toLowerCase();
         let statusProvided = false;
+        let nextCategory = String(current.category || 'clothes').toLowerCase();
+        let categoryProvided = false;
+        let nextClothingSubcategory = String(current.clothing_subcategory || '').toLowerCase();
+        let clothingProvided = false;
 
         if (updates.title != null) setField('title', String(updates.title).trim());
         if (updates.description != null) setField('description', String(updates.description));
@@ -136,10 +163,29 @@ exports.handler = async (event, _context) => {
           statusProvided = true;
           setField('status', status);
         }
+        if (updates.category != null) {
+          const category = normalizeCategory(updates.category);
+          nextCategory = category;
+          categoryProvided = true;
+          setField('category', category);
+          if (category !== 'clothes') {
+            nextClothingSubcategory = '';
+            setField('clothing_subcategory', '');
+          }
+        }
+        if (updates.clothing_subcategory != null) {
+          nextClothingSubcategory = String(updates.clothing_subcategory || '').trim().toLowerCase();
+          clothingProvided = true;
+        }
         if (updates.price_cents != null || updates.price != null) {
           const cents = updates.price_cents != null ? Number(updates.price_cents) : Math.round(Number(updates.price) * 100);
           if (!Number.isInteger(cents) || cents < 0) throw Object.assign(new Error('price must be >= 0'), { statusCode: 400 });
           setField('price_cents', cents);
+        }
+
+        if (categoryProvided || clothingProvided) {
+          const normalizedSubcategory = normalizeClothingSubcategory(nextClothingSubcategory, nextCategory);
+          setField('clothing_subcategory', normalizedSubcategory);
         }
 
         if (inventoryProvided) {
@@ -184,6 +230,8 @@ exports.handler = async (event, _context) => {
       const description = String(body.description || '');
       const currency = String(body.currency || 'usd').toLowerCase().trim() || 'usd';
       const status = String(body.status || 'draft').toLowerCase().trim() || 'draft';
+      const category = normalizeCategory(body.category || 'clothes');
+      const clothingSubcategory = normalizeClothingSubcategory(body.clothing_subcategory || '', category);
       const photos = Array.isArray(body.photos) ? body.photos.map((x) => String(x || '').trim()).filter(Boolean) : [];
       const inventory = body.inventory == null || body.inventory === '' ? 1 : Number(body.inventory);
 
@@ -197,10 +245,10 @@ exports.handler = async (event, _context) => {
       const archivedAt = status === 'archived' ? new Date().toISOString() : null;
 
       const { rows } = await query(
-        `INSERT INTO products (id, status, title, description, price_cents, currency, photos, inventory, sold_out_since, archived_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10)
+        `INSERT INTO products (id, status, category, clothing_subcategory, title, description, price_cents, currency, photos, inventory, sold_out_since, archived_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)
          RETURNING *`,
-        [id, status, title, description, cents, currency, JSON.stringify(photos), inventory, soldOutSince, archivedAt]
+        [id, status, category, clothingSubcategory, title, description, cents, currency, JSON.stringify(photos), inventory, soldOutSince, archivedAt]
       );
 
       return json(201, { ok: true, product: toProduct(rows[0]) });

@@ -16,10 +16,45 @@ function normalizeItems(body) {
   return [];
 }
 
+function getHeader(event, key) {
+  const headers = (event && event.headers) || {};
+  const direct = headers[key];
+  if (direct) return String(direct);
+  const match = Object.keys(headers).find((k) => String(k).toLowerCase() === String(key).toLowerCase());
+  return match ? String(headers[match]) : '';
+}
+
+function firstHeaderValue(value) {
+  return String(value || '').split(',')[0].trim();
+}
+
+function normalizeBaseUrl(value) {
+  const candidate = String(value || '').trim();
+  if (!candidate) return '';
+  try {
+    const url = new URL(candidate);
+    if (!['http:', 'https:'].includes(url.protocol)) return '';
+    return `${url.protocol}//${url.host}`;
+  } catch (_) {
+    return '';
+  }
+}
+
 function getBaseUrl(event) {
-  const fromEnv = process.env.URL || process.env.SITE_URL || '';
-  const fromOrigin = (event && event.headers && (event.headers.origin || event.headers.Origin)) || '';
-  return String(fromEnv || fromOrigin || 'https://sawtooththrift.com').replace(/\/+$/, '');
+  const origin = normalizeBaseUrl(firstHeaderValue(getHeader(event, 'origin')));
+  if (origin) return origin;
+
+  const proto = firstHeaderValue(getHeader(event, 'x-forwarded-proto')) || 'https';
+  const host = firstHeaderValue(getHeader(event, 'x-forwarded-host')) || firstHeaderValue(getHeader(event, 'host'));
+  if (host) {
+    const fromForwarded = normalizeBaseUrl(`${proto}://${host}`);
+    if (fromForwarded) return fromForwarded;
+  }
+
+  const fromEnv = normalizeBaseUrl(process.env.URL || process.env.SITE_URL || process.env.DEPLOY_PRIME_URL || '');
+  if (fromEnv) return fromEnv;
+
+  return 'https://sawtooththrift.com';
 }
 
 exports.handler = async (event) => {
@@ -58,6 +93,7 @@ exports.handler = async (event) => {
           unit_amount: p.price_cents,
           product_data: {
             name: p.title,
+            metadata: { product_id: p.id },
           },
         },
       };

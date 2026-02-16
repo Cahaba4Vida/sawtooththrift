@@ -26,6 +26,31 @@ function parseCart(session) {
   }
 }
 
+
+
+function parseCartFromLineItems(lineItems) {
+  return (Array.isArray(lineItems) ? lineItems : [])
+    .map((item) => {
+      const qty = Number(item && item.quantity);
+      const price = item && item.price ? item.price : null;
+      const product = price && price.product ? price.product : null;
+      const productId = String((product && product.metadata && product.metadata.product_id) || '').trim();
+      return { productId, qty };
+    })
+    .filter((x) => x.productId && Number.isInteger(x.qty) && x.qty > 0);
+}
+
+async function resolveCart(stripe, session) {
+  const fromMetadata = parseCart(session);
+  if (fromMetadata.length) return fromMetadata;
+  if (!stripe || !session || !session.id) return [];
+  const resp = await stripe.checkout.sessions.listLineItems(String(session.id), {
+    limit: 100,
+    expand: ['data.price.product'],
+  });
+  return parseCartFromLineItems(resp && resp.data);
+}
+
 async function applyInventoryForSession(sessionId, cart, transactionRunner = withTransaction) {
   await transactionRunner(async (client) => {
     const exists = await client.query('SELECT 1 FROM processed_stripe_sessions WHERE session_id=$1', [sessionId]);
@@ -69,7 +94,7 @@ exports.handler = async (event) => {
     const session = evt.data && evt.data.object ? evt.data.object : null;
     if (!session || session.payment_status !== 'paid') return json(200, { ok: true, ignored: true });
 
-    const cart = parseCart(session);
+    const cart = await resolveCart(stripe, session);
     const sessionId = String(session.id || '').trim();
     if (!sessionId) return json(200, { ok: true, ignored: true });
 
@@ -82,5 +107,7 @@ exports.handler = async (event) => {
 
 exports.__testOnly = {
   parseCart,
+  parseCartFromLineItems,
+  resolveCart,
   applyInventoryForSession,
 };
