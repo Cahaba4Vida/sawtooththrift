@@ -129,7 +129,7 @@
           </div>
           <div class="field"><label>Status</label><select id="newStatus"><option value="draft" selected>draft</option><option value="active">active</option></select></div>
           <div class="field"><label>Description</label><textarea id="newDescription"></textarea></div>
-          <div class="field"><label>Photos (optional)</label><div class="row"><button class="btn ghost" id="newAddPhotosBtn" type="button">Add photos</button><input id="newPhotoInput" type="file" accept="image/*" capture="environment" multiple class="hidden" /></div><div class="muted">On supported phones, Add photos opens camera or photo library.</div><div id="newPhotoPreviews" class="photo-preview-grid"></div></div>
+          <div class="field"><label>Photos (optional)</label><div class="row"><button class="btn ghost" id="newTakePhotoBtn" type="button">Use camera</button><button class="btn ghost" id="newChoosePhotosBtn" type="button">Choose from library</button><input id="newCameraPhotoInput" type="file" accept="image/*" capture="environment" multiple class="hidden" /><input id="newLibraryPhotoInput" type="file" accept="image/*" multiple class="hidden" /></div><div class="muted">Use camera to take a new photo, or choose from your photo library.</div><div id="newPhotoPreviews" class="photo-preview-grid"></div></div>
           <div class="row">
             <button class="btn" id="createProductBtn" type="button">Create Product</button>
             <button class="btn ghost" id="cancelProductBtn" type="button">Cancel</button>
@@ -440,7 +440,8 @@
           $('#newInventory').value = '1';
           $('#newStatus').value = 'draft';
           $('#newDescription').value = '';
-          $('#newPhotoInput').value = '';
+          $('#newCameraPhotoInput').value = '';
+          $('#newLibraryPhotoInput').value = '';
           state.newPhotoPreviewUrls.forEach((u)=>URL.revokeObjectURL(u));
           state.newPhotoFiles = [];
           state.newPhotoPreviewUrls = [];
@@ -474,39 +475,60 @@
 
           wrap.innerHTML = `
             <div class="row" style="margin-bottom:6px;">
-              <button class="btn ghost" data-add-photos type="button">Add photos</button>
-              <input data-photo-input type="file" accept="image/*" capture="environment" multiple class="hidden" />
+              <button class="btn ghost" data-take-photo type="button">Use camera</button>
+              <button class="btn ghost" data-choose-photos type="button">Choose from library</button>
+              <input data-camera-photo-input type="file" accept="image/*" capture="environment" multiple class="hidden" />
+              <input data-library-photo-input type="file" accept="image/*" multiple class="hidden" />
             </div>
             <div class="photo-preview-grid">
               ${photos.map((url, index)=>`<div class="photo-preview-item"><img src="${esc(url)}" alt="Product photo" /><button class="remove-photo-btn" data-remove-photo="${index}" type="button">×</button></div>`).join('')}
             </div>
           `;
 
-          const addBtn = wrap.querySelector('[data-add-photos]');
-          const input = wrap.querySelector('[data-photo-input]');
-          if (addBtn && input) {
-            addBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); input.click(); });
-            input.addEventListener('click', (e)=>{ e.stopPropagation(); });
-            input.addEventListener('change', async (e)=>{
-              const files = Array.from(e.target.files || []);
-              if (!files.length) return;
-              addBtn.disabled = true;
-              try {
-                for (const file of files) {
-                  const uploadedUrl = await uploadPhotoFile(file, productId);
-                  photos.push(uploadedUrl);
-                }
-                state.photoDrafts[productId] = photos;
-                renderProductPhotoManager(card, productId, status);
-                setStatus('Photo upload complete.');
-              } catch (err) {
-                setStatus(err.message || 'Photo upload failed.', true);
-              } finally {
-                addBtn.disabled = false;
-                input.value = '';
+          const cameraBtn = wrap.querySelector('[data-take-photo]');
+          const libraryBtn = wrap.querySelector('[data-choose-photos]');
+          const cameraInput = wrap.querySelector('[data-camera-photo-input]');
+          const libraryInput = wrap.querySelector('[data-library-photo-input]');
+
+          async function handlePhotoSelection(fileList){
+            const files = Array.from(fileList || []);
+            if (!files.length) return;
+            if (cameraBtn) cameraBtn.disabled = true;
+            if (libraryBtn) libraryBtn.disabled = true;
+            try {
+              for (const file of files) {
+                const uploadedUrl = await uploadPhotoFile(file, productId);
+                photos.push(uploadedUrl);
               }
+              state.photoDrafts[productId] = photos;
+              renderProductPhotoManager(card, productId, status);
+              setStatus('Photo upload complete.');
+            } catch (err) {
+              setStatus(err.message || 'Photo upload failed.', true);
+            } finally {
+              if (cameraBtn) cameraBtn.disabled = false;
+              if (libraryBtn) libraryBtn.disabled = false;
+            }
+          }
+
+          if (cameraBtn && cameraInput) {
+            cameraBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); cameraInput.click(); });
+            cameraInput.addEventListener('click', (e)=>{ e.stopPropagation(); });
+            cameraInput.addEventListener('change', async (e)=>{
+              await handlePhotoSelection(e.target.files);
+              e.target.value = '';
             });
           }
+
+          if (libraryBtn && libraryInput) {
+            libraryBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); libraryInput.click(); });
+            libraryInput.addEventListener('click', (e)=>{ e.stopPropagation(); });
+            libraryInput.addEventListener('change', async (e)=>{
+              await handlePhotoSelection(e.target.files);
+              e.target.value = '';
+            });
+          }
+
 
           wrap.querySelectorAll('[data-remove-photo]').forEach((btn)=>btn.addEventListener('click', (e)=>{
             e.preventDefault();
@@ -758,13 +780,20 @@
           $('#newProductForm').classList.remove('hidden');
         });
 
-        $('#newAddPhotosBtn').addEventListener('click', ()=>{
-          $('#newPhotoInput').click();
+        $('#newTakePhotoBtn').addEventListener('click', ()=>{
+          $('#newCameraPhotoInput').click();
         });
 
-        $('#newPhotoInput').addEventListener('change', (e)=>{
-          setNewPhotoFiles(e.target.files);
-          e.target.value = '';
+        $('#newChoosePhotosBtn').addEventListener('click', ()=>{
+          $('#newLibraryPhotoInput').click();
+        });
+
+        ['#newCameraPhotoInput', '#newLibraryPhotoInput'].forEach((selector)=>{
+          const input = $(selector);
+          input.addEventListener('change', (e)=>{
+            setNewPhotoFiles(e.target.files);
+            e.target.value = '';
+          });
         });
 
         ['input','change'].forEach((evt)=>{
