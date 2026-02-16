@@ -11,6 +11,12 @@ function json(statusCode, body) {
   };
 }
 
+
+async function ensureProductColumns() {
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'clothes'`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS clothing_subcategory TEXT NOT NULL DEFAULT ''`);
+}
+
 function toProduct(row) {
   return {
     id: row.id,
@@ -23,6 +29,8 @@ function toProduct(row) {
     photos: Array.isArray(row.photos) ? row.photos : [],
     inventory: Number.isInteger(row.inventory) ? row.inventory : Number(row.inventory || 0),
     tags: Array.isArray(row.tags) ? row.tags : [],
+    category: String(row.category || 'clothes').toLowerCase(),
+    clothing_subcategory: String(row.clothing_subcategory || '').toLowerCase(),
     search_keywords: Array.isArray(row.search_keywords) ? row.search_keywords : [],
     source_notes: row.source_notes || '',
     buy_price_max_cents: row.buy_price_max_cents,
@@ -35,8 +43,10 @@ exports.handler = async (event) => {
   try {
     if ((event && event.httpMethod) !== 'GET') return json(405, { ok: false, error: 'Method Not Allowed' });
 
+    await ensureProductColumns();
+
     const { rows } = await query(
-      `SELECT id,status,title,description,price_cents,currency,photos,inventory,tags,search_keywords,source_notes,buy_price_max_cents,created_at,updated_at
+      `SELECT id,status,category,clothing_subcategory,title,description,price_cents,currency,photos,inventory,tags,search_keywords,source_notes,buy_price_max_cents,created_at,updated_at
        FROM products
        WHERE status='active'
        ORDER BY created_at DESC`

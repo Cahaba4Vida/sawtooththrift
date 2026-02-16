@@ -10,6 +10,8 @@ const schemaPath = path.resolve(__dirname, '../../db/schema.sql');
 async function applySchemaUpgrades() {
   await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS sold_out_since TIMESTAMPTZ`);
   await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'clothes'`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS clothing_subcategory TEXT NOT NULL DEFAULT ''`);
   await query(`
     CREATE TABLE IF NOT EXISTS product_images (
       id TEXT PRIMARY KEY,
@@ -20,6 +22,7 @@ async function applySchemaUpgrades() {
     )
   `);
   await query(`CREATE INDEX IF NOT EXISTS product_images_product_id_idx ON product_images(product_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS products_category_idx ON products(category)`);
   await query(`ALTER TABLE ai_opportunities ADD COLUMN IF NOT EXISTS buy_links JSONB NOT NULL DEFAULT '[]'::jsonb`);
   await query(`ALTER TABLE ai_opportunities ADD COLUMN IF NOT EXISTS local_pickup JSONB NOT NULL DEFAULT '[]'::jsonb`);
 }

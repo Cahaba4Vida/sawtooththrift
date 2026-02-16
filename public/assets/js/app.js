@@ -58,10 +58,28 @@
     return products;
   }
 
+
+  function categoryKey(p) {
+    const category = String((p && p.category) || '').toLowerCase();
+    const sub = String((p && p.clothing_subcategory) || '').toLowerCase();
+    if (category === 'clothes' && (sub === 'mens' || sub === 'womens')) return `clothes-${sub}`;
+    return category;
+  }
+
+  function categoryLabelFromKey(key) {
+    const v = String(key || '').toLowerCase();
+    if (v === 'clothes-mens') return 'Clothes · Mens';
+    if (v === 'clothes-womens') return 'Clothes · Womens';
+    if (v === 'shoes') return 'Shoes';
+    if (v === 'furniture') return 'Furniture';
+    if (v === 'clothes') return 'Clothes';
+    return v;
+  }
+
   function filterByCategory(products, category) {
     const selected = String(category || "").trim().toLowerCase();
     if (!selected) return products;
-    return products.filter((p) => String(p.category || "").trim().toLowerCase() === selected);
+    return products.filter((p) => categoryKey(p) === selected || String((p && p.category) || '').toLowerCase() === selected);
   }
 
   function sortProducts(products, mode) {
@@ -91,6 +109,7 @@
           </div>
 
           ${p.description ? `<p class="product-desc muted small">${escapeHtml(p.description)}</p>` : ""}
+          ${categoryKey(p) ? `<div class="muted small" style="margin-top:6px;">${escapeHtml(categoryLabelFromKey(categoryKey(p)))}</div>` : ''}
 
           <div class="product-actions">
             ${stock.soldOut
@@ -165,9 +184,9 @@
       let quickMode = "all";
 
       const activeProducts = products.filter((p) => p.status === "active");
-      const categories = Array.from(new Set(activeProducts.map((p) => p.category).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+      const categories = Array.from(new Set(activeProducts.map((p) => categoryKey(p)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
       if (categorySelect) {
-        categorySelect.innerHTML = ['<option value="">All categories</option>', ...categories.map((c) => `<option value="${escapeHtmlAttr(c)}">${escapeHtml(c)}</option>`)].join("");
+        categorySelect.innerHTML = ['<option value="">All categories</option>', ...categories.map((c) => `<option value="${escapeHtmlAttr(c)}">${escapeHtml(categoryLabelFromKey(c))}</option>`)].join("");
       }
 
       function setQuickFilter(nextMode) {

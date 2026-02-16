@@ -30,10 +30,22 @@
       (function () {
         const sessionId = new URL(window.location.href).searchParams.get("session_id");
         if (!sessionId) return;
+
         const el = document.getElementById("sessionLine");
-        if (!el) return;
-        el.style.display = "block";
-        el.textContent = "Order ID: " + sessionId;
+        if (el) {
+          el.style.display = "block";
+          el.textContent = "Order ID: " + sessionId;
+        }
+
+        if (window.Cart && typeof window.Cart.clearCart === "function") {
+          window.Cart.clearCart();
+        }
+
+        fetch('/.netlify/functions/stripe-sync-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId }),
+        }).catch(() => {});
       })();
     </script>
   </body>

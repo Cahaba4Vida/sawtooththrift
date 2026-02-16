@@ -8,7 +8,8 @@
     return {
       id: String((p && p.id) || '').trim(),
       title: String((p && (p.title || p.name)) || '').trim(),
-      category: String((p && p.category) || '').trim(),
+      category: String((p && p.category) || '').trim().toLowerCase(),
+      clothing_subcategory: String((p && p.clothing_subcategory) || '').trim().toLowerCase(),
       status: String((p && p.status) || 'draft').toLowerCase(),
       price: Number(p && (p.price != null ? p.price : Number(p.price_cents || 0) / 100)),
       photos: normalizePhotos(p),

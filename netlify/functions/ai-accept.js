@@ -6,6 +6,11 @@ function json(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(body) };
 }
 
+async function ensureProductColumns(client) {
+  await client.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'clothes'`);
+  await client.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS clothing_subcategory TEXT NOT NULL DEFAULT ''`);
+}
+
 function slugify(value) {
   return String(value || 'item').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'item';
 }
@@ -24,6 +29,7 @@ exports.handler = async (event, _context) => {
     if (!oppId) return json(400, { ok: false, error: 'Missing opp_id' });
 
     const draft = await withTransaction(async (client) => {
+      await ensureProductColumns(client);
       const selected = await client.query(`SELECT * FROM ai_opportunities WHERE opp_id=$1 FOR UPDATE`, [oppId]);
       if (!selected.rows.length) throw Object.assign(new Error('Opportunity not found'), { statusCode: 404 });
       const opp = selected.rows[0];
@@ -44,11 +50,14 @@ exports.handler = async (event, _context) => {
       const title = opp.title;
       const description = `AI draft listing for ${opp.title}. Keywords: ${(opp.search_keywords || []).join(', ')}. Condition checklist: ${(opp.condition_checklist || []).join('; ')}.`;
 
+      const category = String(opp.category || '').toLowerCase().includes('shoe') ? 'shoes' : 'clothes';
+      const clothingSubcategory = category === 'clothes' ? 'mens' : '';
+
       const inserted = await client.query(
-        `INSERT INTO products (id,status,title,description,price_cents,currency,photos,inventory,tags,source_notes,buy_price_max_cents,search_keywords)
-         VALUES ($1,'draft',$2,$3,$4,'usd','[]'::jsonb,1,$5::jsonb,$6,$7,$8::jsonb)
+        `INSERT INTO products (id,status,category,clothing_subcategory,title,description,price_cents,currency,photos,inventory,tags,source_notes,buy_price_max_cents,search_keywords)
+         VALUES ($1,'draft',$2,$3,$4,$5,$6,'usd','[]'::jsonb,1,$7::jsonb,$8,$9,$10::jsonb)
          RETURNING *`,
-        [id, title, description, opp.suggested_price_cents, JSON.stringify(['ai-draft']), opp.notes || '', opp.max_buy_price_cents, JSON.stringify(opp.search_keywords || [])]
+        [id, category, clothingSubcategory, title, description, opp.suggested_price_cents, JSON.stringify(['ai-draft']), opp.notes || '', opp.max_buy_price_cents, JSON.stringify(opp.search_keywords || [])]
       );
 
       return inserted.rows[0];
