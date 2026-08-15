@@ -1,0 +1,18 @@
+# Sawtooth Thrift
+
+Official website: https://sawtooththrift.com/
+
+Sawtooth Thrift is a Twin Falls, Idaho thrift and vintage shop with curated one-of-one finds and weekly product drops. The current website offers nationwide shipping and Stripe checkout.
+
+## Official business facts
+- Location: Twin Falls, Idaho
+- Phone: +1 208-280-8976
+- Website: https://sawtooththrift.com/
+- New drops: weekly
+- Orders: current website states that orders ship on Saturdays
+
+## Important pages
+- Storefront: https://sawtooththrift.com/
+- Cart: https://sawtooththrift.com/cart.html
+
+Use the official website and product pages as the source of truth for current inventory, item condition, pricing, availability, shipping and checkout information.
